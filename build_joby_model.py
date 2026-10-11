@@ -822,9 +822,332 @@ def build_scenarios(wb, A):
 
 
 # --------------------------------------------------------------------------
+# Sensitivity Analysis tab: fare x load factor -> contribution per completed flight
+# --------------------------------------------------------------------------
+SA = "'Sensitivity Analysis'"
+SA_FARE_STEPS_EACH_SIDE = 4  # 9 fare columns centred on the Base fare
+SA_LF_ROWS = 15  # 30% .. 100% in 5-point steps by default
+FILL_AMBER = PatternFill("solid", fgColor="FFEB9C")
+
+
+def build_sensitivity(wb, A, E):
+    ws = wb.create_sheet("Sensitivity Analysis")
+    last_col = 11  # K
+    title_block(ws, "Sensitivity Analysis - Contribution per Completed Flight",
+                "Base scenario, Month 1 unit economics. Average fare (columns) x passenger load "
+                "factor (rows). Linked to the Assumptions tab.", last_col)
+    X = {}
+    base = lambda k: f"{AS}!$C${A[k]}"  # noqa: E731  Base column (general inputs live in C too)
+    eb = E["Base"]
+    eng = lambda k: f"{SC}!${FIRST_M}${eb[k]}"  # noqa: E731  Base engine, Month 1
+
+    def put(row, label, formula, fmt, unit, note, font=F_LINK, key=None, bold=False):
+        style(ws.cell(row=row, column=1, value=label), font=F_BOLD if bold else F_BODY)
+        style(ws.cell(row=row, column=2, value=formula), font=font, fmt=fmt, align=A_RIGHT)
+        if font is F_INPUT:
+            style(ws.cell(row=row, column=2), fill=FILL_INPUT, border=B_INPUT)
+        style(ws.cell(row=row, column=3, value=unit), font=F_NOTE)
+        style(ws.cell(row=row, column=4, value=note), font=F_NOTE, align=A_LEFT)
+        if key:
+            X[key] = row
+
+    def b(key):
+        return f"$B${X[key]}"
+
+    # ---- Linked Base inputs ---------------------------------------------------
+    section_row(ws, 5, "1. Base Scenario Inputs (Month 1, linked from Assumptions - edit there)",
+                last_col)
+    put(6, "Aircraft passenger seats per flight", f"={base('capacity')}", FMT_NUM,
+        "seats / flight", "Assumptions, Route setup (all scenarios).", key="cap")
+    put(7, "Base average fare", f"={base('fare')}", FMT_USD2, "$ / passenger",
+        "Assumptions, Base column. Centre column of the matrix.", key="fare")
+    put(8, "Base passenger load factor", f"={base('load_factor')}", FMT_PCT, "% of seats",
+        "Assumptions, Base column (Month 1, before demand growth).", key="lf")
+    put(9, "Direct flight operating cost per completed flight", f"={base('var_cost_flight')}",
+        FMT_USD2, "$ / flight", "Assumptions, Base column.", key="vcf")
+    put(10, "Variable cost per passenger", f"={base('var_cost_pax')}", FMT_USD2,
+        "$ / passenger", "Assumptions, Base column.", key="vcp")
+    put(11, "Fixed route costs per month", f"={base('fixed_monthly')}", FMT_USD, "$ / month",
+        "Assumptions, Base column. Used only for route-level breakeven.", key="fixed")
+    put(12, "Completed flights per month",
+        f"={base('op_days')}*{base('flights_per_day')}*{base('completion')}", FMT_NUM1,
+        "flights / month", "Operating days x flights per day x Base completion rate.",
+        font=F_CALC, key="completed")
+
+    # ---- Matrix settings ------------------------------------------------------
+    section_row(ws, 14, "2. Matrix Settings (editable, illustrative)", last_col)
+    put(15, "Fare step between columns", 15, FMT_USD2, "$ / passenger",
+        f"Columns run {SA_FARE_STEPS_EACH_SIDE} steps below to {SA_FARE_STEPS_EACH_SIDE} steps "
+        "above the Base fare (floored at $0).", font=F_INPUT, key="fare_step")
+    put(16, "Load factor - first row", 0.30, FMT_PCT, "% of seats",
+        "Top row of the matrix.", font=F_INPUT, key="lf_start")
+    put(17, "Load factor step between rows", 0.05, FMT_PCT, "pct. points",
+        f"{SA_LF_ROWS} rows; keep the last row at or below 100% (checked below).",
+        font=F_INPUT, key="lf_step")
+    put(18, "Breakeven band (+/-)", 10, FMT_USD2, "$ / flight",
+        "Combinations within this band of $0 are shaded amber as 'breakeven'.",
+        font=F_INPUT, key="band")
+    put(19, "Illustrative direct flight cost change", 25, FMT_USD2, "$ / flight",
+        "Used in insight 3 only.", font=F_INPUT, key="cost_shock")
+    dv = DataValidation(type="decimal", operator="between", formula1="0", formula2="1",
+                        showErrorMessage=True, error="Enter a rate between 0% and 100%.")
+    nn = DataValidation(type="decimal", operator="greaterThanOrEqual", formula1="0",
+                        showErrorMessage=True, error="Enter a value of zero or more.")
+    ws.add_data_validation(dv)
+    ws.add_data_validation(nn)
+    dv.add(f"B{X['lf_start']}:B{X['lf_step']}")
+    nn.add(f"B{X['fare_step']}")
+    nn.add(f"B{X['band']}:B{X['cost_shock']}")
+
+    # ---- Breakeven ------------------------------------------------------------
+    section_row(ws, 21, "3. Breakeven Load Factor (Base, Month 1)", last_col)
+    margin = f"({b('cap')}*({b('fare')}-{b('vcp')}))"  # $ per flight per 100% LF
+    put(22, "FLIGHT-LEVEL breakeven load factor (contribution per flight = $0)",
+        f'=IF({b("fare")}>{b("vcp")},{b("vcf")}/{margin},"n.m.")', FMT_PCT, "% of seats",
+        "Formula: Direct flight cost / (Seats x (Fare - Variable cost per passenger)). Covers "
+        "flight-level variable costs only.", font=F_CALC, key="be_flight", bold=True)
+    put(23, "Fixed route costs per completed flight",
+        f'=IF({b("completed")}>0,{b("fixed")}/{b("completed")},"n.m.")', FMT_USD2,
+        "$ / flight", "Formula: Monthly fixed route costs / completed flights per month.",
+        font=F_CALC, key="fixed_pf")
+    put(24, "ROUTE-LEVEL breakeven load factor (after fixed route costs)",
+        f'=IF(AND({b("fare")}>{b("vcp")},ISNUMBER({b("fixed_pf")})),'
+        f'({b("vcf")}+{b("fixed_pf")})/{margin},"n.m.")', FMT_PCT, "% of seats",
+        "Formula: (Direct flight cost + Fixed route cost per flight) / (Seats x (Fare - Variable "
+        "cost per passenger)). Route operating profit = $0.", font=F_CALC, key="be_route",
+        bold=True)
+    put(25, "Gap: route-level minus flight-level breakeven",
+        f'=IF(AND(ISNUMBER({b("be_route")}),ISNUMBER({b("be_flight")})),'
+        f'{b("be_route")}-{b("be_flight")},"n.m.")', FMT_PCT, "pct. points",
+        "Extra load factor needed to cover fixed route costs.", font=F_CALC, key="be_gap")
+    put(26, "Base load factor headroom vs. flight-level breakeven",
+        f'=IF(ISNUMBER({b("be_flight")}),{b("lf")}-{b("be_flight")},"n.m.")', FMT_PCT,
+        "pct. points", "Positive = Base case covers its direct flight costs.", font=F_CALC,
+        key="hr_flight")
+    put(27, "Base load factor headroom vs. route-level breakeven",
+        f'=IF(ISNUMBER({b("be_route")}),{b("lf")}-{b("be_route")},"n.m.")', FMT_PCT,
+        "pct. points", "Positive = Base case also covers fixed route costs (Month 1).",
+        font=F_CALC, key="hr_route")
+    for k in ("be_flight", "be_route", "be_gap", "hr_flight", "hr_route"):
+        ws.cell(row=X[k], column=2).fill = FILL_PALE
+
+    # ---- Matrix -----------------------------------------------------------------
+    section_row(ws, 29, "4. Contribution Profit per Completed Flight ($) - Average Fare "
+                        "(columns) x Load Factor (rows)", last_col)
+    hdr = 30
+    first_r, last_r = hdr + 1, hdr + SA_LF_ROWS
+    fcols = [get_column_letter(3 + i) for i in range(2 * SA_FARE_STEPS_EACH_SIDE + 1)]  # C..K
+    for c in range(1, last_col + 1):
+        ws.cell(row=hdr, column=c).fill = FILL_MID
+    style(ws.cell(row=hdr, column=1, value="Formula: Seats x LF x (Fare - Var. cost/pax) - "
+                                           "Direct flight cost"),
+          font=Font(name=FONT_NAME, size=9, italic=True, color=WHITE), align=A_LEFT)
+    style(ws.cell(row=hdr, column=2, value="LF \\ Fare"), font=F_HEADER, align=A_CENTER)
+    for i, col in enumerate(fcols):
+        if i == 0:
+            f = f"=MAX(0,ROUND({b('fare')}-{SA_FARE_STEPS_EACH_SIDE}*{b('fare_step')},2))"
+        else:
+            f = f"=MAX(0,ROUND({fcols[i - 1]}{hdr}+{b('fare_step')},2))"
+        style(ws[f"{col}{hdr}"], font=F_HEADER, fmt=FMT_USD2, align=A_CENTER)
+        ws[f"{col}{hdr}"] = f
+    for j in range(SA_LF_ROWS):
+        r = first_r + j
+        f = (f"=ROUND({b('lf_start')},4)" if j == 0 else f"=ROUND(B{r - 1}+{b('lf_step')},4)")
+        style(ws[f"B{r}"], font=F_BOLD, fmt=FMT_PCT, align=A_CENTER, fill=FILL_LIGHT)
+        ws[f"B{r}"] = f
+        for col in fcols:
+            style(ws[f"{col}{r}"], font=F_CALC, fmt=FMT_USD, align=A_RIGHT, border=B_INPUT)
+            ws[f"{col}{r}"] = (f"={b('cap')}*$B{r}*({col}${hdr}-{b('vcp')})-{b('vcf')}")
+    grid = f"$C${first_r}:$K${last_r}"
+    lf_axis = f"$B${first_r}:$B${last_r}"
+    fare_axis = f"$C${hdr}:$K${hdr}"
+    tl = f"C{first_r}"
+    ws.conditional_formatting.add(
+        grid, FormulaRule(formula=[f"ABS({tl})<={b('band')}"], fill=FILL_AMBER, stopIfTrue=True))
+    ws.conditional_formatting.add(
+        grid, FormulaRule(formula=[f"{tl}<-{b('band')}"], fill=FILL_FAIL,
+                          font=Font(color="9C0006")))
+    ws.conditional_formatting.add(
+        grid, FormulaRule(formula=[f"{tl}>{b('band')}"], fill=FILL_PASS,
+                          font=Font(color="006100")))
+    ws.conditional_formatting.add(
+        grid, FormulaRule(formula=[f"AND(C${hdr}={b('fare')},$B{first_r}={b('lf')})"],
+                          font=Font(bold=True, underline="single"),
+                          border=Border(left=Side(style="medium", color=NAVY),
+                                        right=Side(style="medium", color=NAVY),
+                                        top=Side(style="medium", color=NAVY),
+                                        bottom=Side(style="medium", color=NAVY))))
+    X.update(hdr=hdr, first_r=first_r, last_r=last_r)
+    # Base-case callout beside the matrix (computed directly, not looked up)
+    style(ws.cell(row=first_r, column=1, value="Base case (Month 1):"), font=F_BOLD, align=A_RIGHT)
+    style(ws.cell(row=first_r + 1, column=1,
+                  value=(f'=TEXT({b("fare")},"$0.00")&" fare x "&TEXT({b("lf")},"0.0%")&'
+                         f'" load factor = "&TEXT({b("cap")}*{b("lf")}*({b("fare")}-{b("vcp")})'
+                         f'-{b("vcf")},"$#,##0.00")&" per completed flight"')),
+          font=F_CALC, align=A_RIGHT)
+    style(ws.cell(row=first_r + 2, column=1, value="(bold, boxed cell in the grid when on the axes)"),
+          font=F_NOTE, align=A_RIGHT)
+
+    # Breakeven by fare column
+    r = last_r + 1
+    X["be_flight_row"], X["be_route_row"] = r, r + 1
+    for rr, label, extra in ((r, "Flight-level breakeven LF at this fare", ""),
+                             (r + 1, "Route-level breakeven LF at this fare (after fixed costs)",
+                              f"+{b('fixed_pf')}")):
+        ws.merge_cells(start_row=rr, start_column=1, end_row=rr, end_column=2)
+        style(ws.cell(row=rr, column=1, value=label), font=F_BOLD, align=A_RIGHT, fill=FILL_PALE)
+        for col in fcols:
+            cond = f"{col}${hdr}>{b('vcp')}"
+            if extra:
+                cond = f"AND({cond},ISNUMBER({b('fixed_pf')}))"
+            style(ws[f"{col}{rr}"], font=F_BOLD_CALC, fmt=FMT_PCT, align=A_RIGHT, fill=FILL_PALE,
+                  border=B_TOP)
+            ws[f"{col}{rr}"] = (f'=IF({cond},({b("vcf")}{extra})/({b("cap")}*({col}${hdr}-'
+                                f'{b("vcp")})),"n.m.")')
+        ws.conditional_formatting.add(
+            f"C{rr}:K{rr}", FormulaRule(formula=[f"AND(ISNUMBER(C{rr}),C{rr}>1)"],
+                                        font=Font(color="C00000", bold=True)))
+    r += 2
+    style(ws.cell(row=r, column=1,
+                  value="Bold boxed cell = Base fare x Base load factor (when on the grid). "
+                        "Breakeven LF above 100% (red) cannot be reached at that fare."),
+          font=F_NOTE)
+
+    # Legend and classification counts
+    r += 2
+    X["legend"] = r
+    band = b("band")
+    legend = [
+        ("Loss-making (below -band)", FILL_FAIL, f'=COUNTIF({grid},"<"&-{band})'),
+        ("Breakeven (within +/- band)", FILL_AMBER,
+         f'=COUNTIFS({grid},">="&-{band},{grid},"<="&{band})'),
+        ("Profitable (above +band)", FILL_PASS, f'=COUNTIF({grid},">"&{band})'),
+    ]
+    style(ws.cell(row=r, column=1, value="Legend (fare / load factor combinations)"),
+          font=F_BOLD)
+    style(ws.cell(row=r, column=2, value="Count"), font=F_BOLD, align=A_CENTER)
+    for i, (label, fill, f) in enumerate(legend, start=1):
+        style(ws.cell(row=r + i, column=1, value=label), font=F_BODY, fill=fill)
+        style(ws.cell(row=r + i, column=2, value=f), font=F_CALC, fmt=FMT_INT, align=A_CENTER)
+    X["cnt_first"], X["cnt_last"] = r + 1, r + 3
+    r += 5
+
+    # ---- Insights ---------------------------------------------------------------
+    section_row(ws, r, "5. Business Insights (illustrative; text updates with the inputs)",
+                last_col)
+    r += 1
+    cap, fare, lf, vcf, vcp = b("cap"), b("fare"), b("lf"), b("vcf"), b("vcp")
+    low_be = f"$C${X['be_flight_row']}"
+    high_be = f"$K${X['be_flight_row']}"
+    insights = [
+        ('="1. Pricing: at the Base "&TEXT(' + lf + ',"0%")&" load factor, every "&TEXT('
+         + b("fare_step") + ',"$0")&" change in average fare moves contribution per completed '
+         'flight by "&TEXT(' + cap + "*" + lf + "*" + b("fare_step") + ',"$#,##0")&". Across the '
+         'matrix the flight-level breakeven load factor falls from "&TEXT(' + low_be
+         + ',"0.0%")&" at "&TEXT($C$' + str(hdr) + ',"$0")&" to "&TEXT(' + high_be
+         + ',"0.0%")&" at "&TEXT($K$' + str(hdr) + ',"$0")&", so pricing power directly widens '
+         'the margin of safety against weak demand."'),
+        ('="2. Demand: each "&TEXT(' + b("lf_step") + '*100,"0")&"-point change in load factor '
+         'moves contribution per flight by "&TEXT(' + cap + "*" + b("lf_step") + "*(" + fare
+         + "-" + vcp + '),"$#,##0")&". The Base route covers its direct flight costs above a "'
+         '&TEXT(' + b("be_flight") + ',"0.0%")&" load factor but needs "&TEXT('
+         + b("be_route") + ',"0.0%")&" to also cover fixed route costs - a "&TEXT('
+         + b("be_gap") + '*100,"0.0")&"-point gap that only more completed flights, a higher '
+         'fare or lower fixed costs can close."'),
+        ('="3. Cost: a "&TEXT(' + b("cost_shock") + ',"$0")&" increase in direct flight cost '
+         'per completed flight cuts contribution per flight by the same "&TEXT('
+         + b("cost_shock") + ',"$0")&" at every fare and load factor and raises the flight-level '
+         'breakeven load factor by "&TEXT(' + b("cost_shock") + "/" + margin
+         + '*100,"0.0")&" points. Per-passenger costs instead reduce the net fare earned on every '
+         'seat sold, so they matter most when load factors are high."'),
+    ]
+    X["insight_first"] = r
+    for text in insights:
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=last_col)
+        f = (f'=IFERROR({text[1:]},"Insight not meaningful: Base fare does not exceed the '
+             f'variable cost per passenger, or there are no completed flights.")')
+        style(ws.cell(row=r, column=1, value=f), font=F_BODY, align=A_WRAP)
+        ws.row_dimensions[r].height = 42
+        r += 1
+    X["insight_last"] = r - 1
+    r += 1
+
+    # ---- Validation checks ------------------------------------------------------------
+    section_row(ws, r, "6. Sensitivity Validation Checks", last_col)
+    r += 1
+    on_grid = f"SUMPRODUCT(({lf_axis}={lf})*({fare_axis}={fare}))"
+    at_base = f"SUMPRODUCT(({lf_axis}={lf})*({fare_axis}={fare})*{grid})"
+    eng_cpf = f"{eng('contrib')}/{eng('completed')}"
+    n_cells = SA_LF_ROWS * len(fcols)
+    checks = [
+        ("Load factor axis within 0%-100%",
+         f'IF(AND(MIN({lf_axis})>=0,MAX({lf_axis})<=1),"PASS","FAIL")'),
+        ("Matrix rises (or holds) with fare in every row",
+         f'IF(SUMPRODUCT(($D${first_r}:$K${last_r}<$C${first_r}:$J${last_r}-0.000001)*1)=0,'
+         f'"PASS","FAIL")'),
+        ("Matrix rises with load factor wherever fare > variable cost per passenger",
+         f'IF(SUMPRODUCT(($C${first_r + 1}:$K${last_r}<$C${first_r}:$K${last_r - 1}-0.000001)'
+         f'*({fare_axis}>{vcp}))=0,"PASS","FAIL")'),
+        ("Base fare x Base LF cell = Base engine Month 1 contribution / flight",
+         f'IF(OR({eng("completed")}=0,{on_grid}<>1),"N/A",'
+         f'IF(ABS({at_base}-{eng_cpf})<0.01,"PASS","FAIL"))'),
+        ("Flight-level breakeven LF = Base engine Month 1",
+         f'IF(OR(NOT(ISNUMBER({b("be_flight")})),{eng("max_margin")}<=0),"N/A",'
+         f'IF(ABS({b("be_flight")}-{eng("flight_cost")}/{eng("max_margin")})<0.000001,'
+         f'"PASS","FAIL"))'),
+        ("Route-level breakeven LF = Base engine Month 1",
+         f'IF(OR(NOT(ISNUMBER({b("be_route")})),{eng("max_margin")}<=0),"N/A",'
+         f'IF(ABS({b("be_route")}-({eng("flight_cost")}+{eng("fixed")})/{eng("max_margin")})'
+         f'<0.000001,"PASS","FAIL"))'),
+        ("Contribution per flight at the flight-level breakeven LF = $0",
+         f'IF(NOT(ISNUMBER({b("be_flight")})),"N/A",'
+         f'IF(ABS({cap}*{b("be_flight")}*({fare}-{vcp})-{vcf})<0.01,"PASS","FAIL"))'),
+        ("Route operating profit at the route-level breakeven LF = $0 (Month 1)",
+         f'IF(NOT(ISNUMBER({b("be_route")})),"N/A",'
+         f'IF(ABS({b("completed")}*({cap}*{b("be_route")}*({fare}-{vcp})-{vcf})-{b("fixed")})'
+         f'<0.01,"PASS","FAIL"))'),
+        ("Route-level breakeven >= flight-level breakeven",
+         f'IF(NOT(ISNUMBER({b("be_gap")})),"N/A",IF({b("be_gap")}>=-0.000001,"PASS","FAIL"))'),
+        (f"Legend counts sum to all {n_cells} combinations",
+         f'IF(SUM($B${X["cnt_first"]}:$B${X["cnt_last"]})={n_cells},"PASS","FAIL")'),
+    ]
+    first = r
+    for label, f in checks:
+        style(ws.cell(row=r, column=1, value=label), font=F_BODY)
+        style(ws.cell(row=r, column=2, value=f"={f}"), font=F_BOLD, align=A_CENTER)
+        r += 1
+    last = r - 1
+    rng = f"$B${first}:$B${last}"
+    ws.conditional_formatting.add(rng, CellIsRule(operator="equal", formula=['"PASS"'],
+                                                  fill=FILL_PASS))
+    ws.conditional_formatting.add(rng, CellIsRule(operator="equal", formula=['"FAIL"'],
+                                                  fill=FILL_FAIL))
+    style(ws.cell(row=r, column=1, value="SENSITIVITY STATUS"), font=F_BOLD)
+    style(ws.cell(row=r, column=2,
+                  value=(f'=IF(COUNTIF({rng},"FAIL")=0,"ALL SENSITIVITY CHECKS PASS ("&'
+                         f'COUNTIF({rng},"PASS")&" pass, "&COUNTIF({rng},"N/A")&" n/a)",'
+                         f'"REVIEW: "&COUNTIF({rng},"FAIL")&" FAILING")')),
+          font=F_BOLD, align=A_LEFT)
+    ws.conditional_formatting.add(f"B{r}", FormulaRule(formula=[f'LEFT($B${r},3)="ALL"'],
+                                                       fill=FILL_PASS))
+    ws.conditional_formatting.add(f"B{r}", FormulaRule(formula=[f'LEFT($B${r},3)<>"ALL"'],
+                                                       fill=FILL_FAIL))
+    X["status"] = r
+    X["check_first"], X["check_last"] = first, last
+
+    ws.column_dimensions["A"].width = 62
+    ws.column_dimensions["B"].width = 14
+    for col in fcols:
+        ws.column_dimensions[col].width = 12
+    ws.freeze_panes = "A4"
+    ws.sheet_view.showGridLines = False
+    return ws, X
+
+
+# --------------------------------------------------------------------------
 # Checks (bottom of the Financial Model tab)
 # --------------------------------------------------------------------------
-def build_checks(wb, fm, R, row, last_col, A, S):
+def build_checks(wb, fm, R, row, last_col, A, S, X):
     row += 1
     section_row(fm, row, "E. Model Integrity Checks", last_col)
     row += 1
@@ -900,6 +1223,9 @@ def build_checks(wb, fm, R, row, last_col, A, S):
         ("Scenario Comparison (active case) matches Financial Model - passengers",
          f"ABS({sc_active.format(r=S['pax'])}-{t('pax')})<{tol}",
          "Independent scenario engine reconciles to the main model."),
+        ("Sensitivity Analysis checks pass",
+         f'LEFT({SA}!$B${X["status"]},3)="ALL"',
+         "Status of the validation block on the Sensitivity Analysis tab."),
     ]
     first = row
     for label, cond, desc in checks:
@@ -1008,9 +1334,11 @@ def build_readme(wb, A, R):
                                "checks. FY totals in column O."),
         ("4. Scenario Comparison", "Base / Upside / Downside computed side by side by an "
                                    "independent engine (rows 50+), with variance vs. Base."),
-        ("Planned: Sensitivity Analysis", "Not yet built. Flex inputs via the inp_* defined names "
-                                          "(or the Assumptions column F cells) and read results "
-                                          "from the out_* defined names."),
+        ("5. Sensitivity Analysis", "Base scenario, Month 1: contribution per completed "
+                                    "flight across average fare (columns) x load factor (rows), "
+                                    "shaded loss / breakeven / profitable. Flight-level vs. "
+                                    "route-level breakeven load factor, three business insights "
+                                    "and its own validation checks."),
         ("Planned: Executive Dashboard", "Not yet built. KPI tiles and charts should reference "
                                          "out_* names and the Scenario Comparison summary "
                                          "(rows 6-40) rather than raw cell addresses."),
@@ -1080,8 +1408,9 @@ def build(out_path):
     wb = Workbook()
     _, A = build_assumptions(wb)
     fm, R, row, last_col = build_financial_model(wb, A)
-    _, S, _ = build_scenarios(wb, A)
-    master_row, n_checks = build_checks(wb, fm, R, row, last_col, A, S)
+    _, S, E = build_scenarios(wb, A)
+    _, X = build_sensitivity(wb, A, E)
+    master_row, n_checks = build_checks(wb, fm, R, row, last_col, A, S, X)
     build_readme(wb, A, R)
 
     # Model status on the Assumptions tab

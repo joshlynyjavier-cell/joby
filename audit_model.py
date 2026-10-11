@@ -266,6 +266,106 @@ def check_identities(au, tag, V, Y, capacity, fixed_in_rows=True):
 
 
 # --------------------------------------------------------------------------
+# Sensitivity Analysis audit
+# --------------------------------------------------------------------------
+SA_SETTINGS = {"fare_step": "Fare step between columns", "lf_start": "Load factor - first row",
+               "lf_step": "Load factor step between rows", "band": "Breakeven band (+/-)",
+               "cost_shock": "Illustrative direct flight cost change"}
+
+
+def sensitivity_reference(p, st):
+    cap, fare, lf, vcf, vcp, fixed = (p["capacity"], p["fare"], p["lf"], p["vcf"], p["vcp"],
+                                      p["fixed"])
+    completed = p["days"] * p["fpd"] * p["completion"]
+    fares = [max(0.0, round(fare - 4 * st["fare_step"], 2))]
+    for _ in range(8):
+        fares.append(max(0.0, round(fares[-1] + st["fare_step"], 2)))
+    lfs = [round(st["lf_start"], 4)]
+    for _ in range(14):
+        lfs.append(round(lfs[-1] + st["lf_step"], 4))
+    grid = [[cap * l * (f - vcp) - vcf for f in fares] for l in lfs]
+    fixed_pf = fixed / completed if completed > 0 else NM
+    be_f = lambda f: vcf / (cap * (f - vcp)) if f > vcp else NM  # noqa: E731
+    be_r = lambda f: ((vcf + fixed_pf) / (cap * (f - vcp))  # noqa: E731
+                      if f > vcp and fixed_pf != NM else NM)
+    bf, br = be_f(fare), be_r(fare)
+    flat = [v for row in grid for v in row]
+    band = st["band"]
+    return dict(
+        fares=fares, lfs=lfs, grid=grid, be_flight=bf, be_route=br, fixed_pf=fixed_pf,
+        completed=completed,
+        be_gap=br - bf if NM not in (bf, br) else NM,
+        hr_flight=lf - bf if bf != NM else NM, hr_route=lf - br if br != NM else NM,
+        be_flight_row=[be_f(f) for f in fares], be_route_row=[be_r(f) for f in fares],
+        counts=[sum(v < -band for v in flat), sum(-band <= v <= band for v in flat),
+                sum(v > band for v in flat)],
+        lf_axis_ok=min(lfs) >= 0 and max(lfs) <= 1)
+
+
+def audit_sensitivity(au, wb, p):
+    ws = wb["Sensitivity Analysis"]
+    rows = rows_by_label(ws)
+    st = {k: ws.cell(row=rows[v], column=2).value for k, v in SA_SETTINGS.items()}
+    ref = sensitivity_reference(p, st)
+    lab = {
+        "be_flight": "FLIGHT-LEVEL breakeven load factor (contribution per flight = $0)",
+        "be_route": "ROUTE-LEVEL breakeven load factor (after fixed route costs)",
+        "fixed_pf": "Fixed route costs per completed flight",
+        "be_gap": "Gap: route-level minus flight-level breakeven",
+        "hr_flight": "Base load factor headroom vs. flight-level breakeven",
+        "hr_route": "Base load factor headroom vs. route-level breakeven",
+        "completed": "Completed flights per month",
+    }
+    for k, l in lab.items():
+        au.cmp(f"SA {k}", ws.cell(row=rows[l], column=2).value, ref[k])
+    for k, l in (("capacity", "Aircraft passenger seats per flight"), ("fare", "Base average fare"),
+                 ("lf", "Base passenger load factor"),
+                 ("vcf", "Direct flight operating cost per completed flight"),
+                 ("vcp", "Variable cost per passenger"), ("fixed", "Fixed route costs per month")):
+        au.cmp(f"SA link {k}", ws.cell(row=rows[l], column=2).value, p[k])
+    hdr = next(r for r in range(1, ws.max_row + 1) if ws.cell(row=r, column=2).value == "LF \\ Fare")
+    for j, f in enumerate(ref["fares"]):
+        au.cmp(f"SA fare axis col{j + 1}", ws.cell(row=hdr, column=3 + j).value, f)
+    for i, l in enumerate(ref["lfs"]):
+        au.cmp(f"SA LF axis row{i + 1}", ws.cell(row=hdr + 1 + i, column=2).value, l)
+        for j in range(9):
+            v = ws.cell(row=hdr + 1 + i, column=3 + j).value
+            au.cmp(f"SA grid LF={l} fare={ref['fares'][j]}", v, ref["grid"][i][j])
+            # identity on the workbook's own axis values
+            au.ident("SA grid identity", close(v, p["capacity"] * ws.cell(row=hdr + 1 + i, column=2).value
+                                               * (ws.cell(row=hdr, column=3 + j).value - p["vcp"])
+                                               - p["vcf"]))
+    rf = rows["Flight-level breakeven LF at this fare"]
+    rr = rows["Route-level breakeven LF at this fare (after fixed costs)"]
+    for j in range(9):
+        au.cmp(f"SA BE flight col{j + 1}", ws.cell(row=rf, column=3 + j).value, ref["be_flight_row"][j])
+        au.cmp(f"SA BE route col{j + 1}", ws.cell(row=rr, column=3 + j).value, ref["be_route_row"][j])
+        # contribution at the column's flight-level breakeven LF must be zero
+        be = ref["be_flight_row"][j]
+        if be != NM:
+            au.ident("SA zero contribution at column BE",
+                     abs(p["capacity"] * be * (ref["fares"][j] - p["vcp"]) - p["vcf"]) < 1e-6)
+    for i, lbl in enumerate(("Loss-making (below -band)", "Breakeven (within +/- band)",
+                             "Profitable (above +band)")):
+        au.cmp(f"SA count {lbl}", ws.cell(row=rows[lbl], column=2).value, ref["counts"][i])
+    # route-level breakeven really is route breakeven: monthly route profit = 0
+    if ref["be_route"] != NM:
+        prof = ref["completed"] * (p["capacity"] * ref["be_route"] * (p["fare"] - p["vcp"])
+                                   - p["vcf"]) - p["fixed"]
+        au.ident("SA route profit at route BE = 0", abs(prof) < 1e-6)
+    for r in range(rows["5. Business Insights (illustrative; text updates with the inputs)"] + 1,
+                   rows["6. Sensitivity Validation Checks"]):
+        t = ws.cell(row=r, column=1).value
+        if t:
+            au.ident(f"SA insight row {r} is text without errors",
+                     isinstance(t, str) and not any(e in t for e in ("#VALUE", "#DIV", "#NAME", "#REF")))
+    first = rows["6. Sensitivity Validation Checks"] + 1
+    statuses = {ws.cell(row=r, column=1).value: ws.cell(row=r, column=2).value
+                for r in range(first, rows["SENSITIVITY STATUS"])}
+    return ref, statuses, ws.cell(row=rows["SENSITIVITY STATUS"], column=2).value
+
+
+# --------------------------------------------------------------------------
 # Test cases: (name, active scenario, {input key: value applied to that scenario})
 # --------------------------------------------------------------------------
 CASES = [
@@ -281,13 +381,27 @@ CASES = [
     ("Full load factor + demand growth (cap)", "Base", {"lf": 1.0}),
     ("Higher flight op. cost ($600/flight)", "Base", {"vcf": 600}),
     ("Fare below cost per passenger ($10)", "Base", {"fare": 10}),
+    ("Sensitivity: $5 fare step, LF 50%-85% by 2.5pt", "Base",
+     {"sa:fare_step": 5, "sa:lf_start": 0.5, "sa:lf_step": 0.025}),
+    ("Sensitivity: wider $40 fare step, $0 band", "Base", {"sa:fare_step": 40, "sa:band": 0}),
+    ("Sensitivity: LF axis past 100% (should FAIL)", "Base",
+     {"sa:lf_start": 0.5, "sa:lf_step": 0.05}),
 ]
+EXPECTED_FAILS = {
+    "Sensitivity: LF axis past 100% (should FAIL)": {"Load factor axis within 0%-100%",
+                                                    "Sensitivity Analysis checks pass"},
+}
 
 
 def apply_case(wb, scenario, overrides, rows):
     ws = wb["Assumptions"]
     ws["C5"] = scenario
+    sa = wb["Sensitivity Analysis"]
+    sarows = rows_by_label(sa)
     for k, v in overrides.items():
+        if k.startswith("sa:"):
+            sa.cell(row=sarows[SA_SETTINGS[k[3:]]], column=2, value=v)
+            continue
         col = 3 if k in GENERAL else SCEN_COL[scenario]
         ws.cell(row=rows[ASSUMPTION_LABELS[k]], column=col, value=v)
 
@@ -354,11 +468,18 @@ def run_case(lo, src, work, idx, name, scenario, overrides):
     last = frows["OVERALL MODEL STATUS"]
     statuses = {fm.cell(row=r, column=1).value: fm.cell(row=r, column=3).value
                 for r in range(first, last)}
-    fails = [k for k, v in statuses.items() if v != "PASS"]
-    if fails:
-        au.failures.append(f"integrity checks failing: {fails}")
-    master = fm.cell(row=last, column=3).value
     info = {}
+    sref, sstat, sa_status = audit_sensitivity(au, wb, inputs["Base"])
+    expected = EXPECTED_FAILS.get(name, set())
+    fails = {k for k, v in statuses.items() if v != "PASS"}
+    sfails = {k for k, v in sstat.items() if v == "FAIL"}
+    if (fails | sfails) != expected:
+        au.failures.append(f"check results {sorted(fails | sfails)} != expected {sorted(expected)}")
+    # The sheet's own checks must agree with the Python verdicts
+    au.ident("SA LF-axis check agrees with Python",
+             (sstat["Load factor axis within 0%-100%"] == "PASS") == sref["lf_axis_ok"])
+    info["sensitivity"] = sa_status
+    master = fm.cell(row=last, column=3).value
     for lbl in ("Months where demand exceeds seat capacity (load factor capped at 100%)",):
         if lbl in frows:
             info["capped months"] = fm.cell(row=frows[lbl], column=3).value
@@ -387,8 +508,9 @@ def main():
     total_cmp = total_id = total_fail = 0
     print("Recalculation engine: LibreOffice headless (Microsoft Excel was not used)\n")
     hdr = (f"| Case | Revenue | Contribution | Route op. profit | Contrib./flight | "
-           f"BE LF flight | BE LF route | Cells compared | Identities | Mismatches | Status |")
-    lines += [hdr, "|" + "---|" * 11]
+           f"BE LF flight | BE LF route | Cells compared | Identities | Mismatches | Status | "
+           f"Sensitivity status |")
+    lines += [hdr, "|" + "---|" * 12]
     detail = []
     for i, (name, scen, ov) in enumerate(CASES):
         au, Y, master, notes, info = run_case(lo, src, work, i, name, scen, ov)
@@ -401,7 +523,7 @@ def main():
         lines.append(f"| {name} | {fmt_money(Y['revenue'])} | {fmt_money(Y['contrib'])} | "
                      f"{fmt_money(Y['rop'])} | {cpf} | {fmt_pct(Y['be_flight'])} | "
                      f"{fmt_pct(Y['be_route'])} | {au.comparisons} | {au.identities} | "
-                     f"{len(au.failures)} | {status} |")
+                     f"{len(au.failures)} | {status} | {info.get('sensitivity')} |")
         print(f"{name:<42} compared={au.comparisons:<5} identities={au.identities:<5} "
               f"mismatches={len(au.failures):<4} {master}  {'; '.join(notes)}")
         for f in au.failures[:12]:

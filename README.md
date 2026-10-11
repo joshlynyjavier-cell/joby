@@ -11,7 +11,7 @@ performance over 12 months.
 
 | File | Purpose |
 |---|---|
-| `Joby_Financial_Model.xlsx` | The workbook: Read Me, Assumptions, Financial Model, Scenario Comparison |
+| `Joby_Financial_Model.xlsx` | The workbook: Read Me, Assumptions, Financial Model, Scenario Comparison, Sensitivity Analysis |
 | `build_joby_model.py` | Generates the workbook with openpyxl (all calculations are Excel formulas) |
 | `audit_model.py` | Cell-by-cell audit against an independent Python recalculation across 12 scenario and edge-case runs (results in `AUDIT.md`) |
 | `validate_model.py` | Recalculates in headless LibreOffice, checks for formula errors, compares all scenarios to an independent Python calculation, tests the scenario selector, and runs negative tests on the integrity checks |

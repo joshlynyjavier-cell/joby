@@ -9,7 +9,7 @@ For each test case, `audit_model.py` copies the workbook, changes the inputs, re
 copy in LibreOffice and then:
 1. Recomputes every monthly and annual line in Python from the raw inputs. It compares the
    results cell by cell with the Financial Model, the Scenario Comparison engine (all three
-   cases) and the Scenario Comparison summary table (936 cells per case).
+   cases) and the Scenario Comparison summary table (936 cells per case, plus 193 Sensitivity Analysis cells since that tab was added).
 2. Checks these identities on the workbook's own values, every month:
    revenue = passengers × fare;
    passengers = completed flights × seats per flight × load factor;
@@ -29,26 +29,56 @@ copy in LibreOffice and then:
 | 2 | When demand growth pushed the load factor past 100%, the model capped it silently. The "monthly load factor within 0–100%" check can never fail because of that cap. | Low | Added an information-only count of capped months below the check block. It is highlighted when above zero. |
 
 ## Results after the fix
-| Case | Revenue | Contribution | Route op. profit | Contrib./flight | BE LF flight | BE LF route | Cells compared | Identities | Mismatches | Status |
-|---|---|---|---|---|---|---|---|---|---|---|
-| Base (as delivered) | $4,662,285 | $1,278,266 | $198,266 | $125.14 | 46.0% | 62.2% | 936 | 264 | 0 | ALL 19 CHECKS PASS |
-| Upside (selector) | $6,111,313 | $2,918,336 | $1,912,245 | $279.82 | 37.8% | 51.0% | 936 | 264 | 0 | ALL 19 CHECKS PASS |
-| Downside (selector) | $3,219,996 | $-282,303 | $-1,515,859 | $-29.17 | 58.6% | 81.4% | 936 | 264 | 0 | ALL 19 CHECKS PASS |
-| Zero flights (0 flights/day) | $0 | $0 | $-1,080,000 | n.m. | n.m. | n.m. | 936 | 240 | 0 | ALL 19 CHECKS PASS |
-| Zero completion rate | $0 | $0 | $-1,080,000 | n.m. | n.m. | n.m. | 936 | 240 | 0 | ALL 19 CHECKS PASS |
-| Completion rate 50% | $2,453,834 | $672,771 | $-407,229 | $125.14 | 46.0% | 76.8% | 936 | 264 | 0 | ALL 19 CHECKS PASS |
-| Completion rate 100% | $4,907,669 | $1,345,543 | $265,543 | $125.14 | 46.0% | 61.4% | 936 | 264 | 0 | ALL 19 CHECKS PASS |
-| Zero load factor | $0 | $-3,064,320 | $-4,144,320 | $-300.00 | 46.0% | 62.2% | 936 | 264 | 0 | ALL 19 CHECKS PASS |
-| Full load factor, no growth | $7,150,080 | $3,595,469 | $2,515,469 | $352.00 | 46.0% | 62.2% | 936 | 264 | 0 | ALL 19 CHECKS PASS |
-| Full load factor + demand growth (cap) | $7,150,080 | $3,595,469 | $2,515,469 | $352.00 | 46.0% | 62.2% | 936 | 264 | 0 | ALL 19 CHECKS PASS; 11 capped month(s) |
-| Higher flight op. cost ($600/flight) | $4,662,285 | $-1,786,054 | $-2,866,054 | $-174.86 | 92.0% | 108.2% | 936 | 264 | 0 | ALL 19 CHECKS PASS |
-| Fare below cost per passenger ($10) | $266,416 | $-3,117,603 | $-4,197,603 | $-305.22 | n.m. | n.m. | 936 | 240 | 0 | ALL 19 CHECKS PASS |
+| Case | Revenue | Contribution | Route op. profit | Contrib./flight | BE LF flight | BE LF route | Cells compared | Identities | Mismatches | Status | Sensitivity status |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Base (as delivered) | $4,662,285 | $1,278,266 | $198,266 | $125.14 | 46.0% | 62.2% | 1129 | 413 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) |
+| Upside (selector) | $6,111,313 | $2,918,336 | $1,912,245 | $279.82 | 37.8% | 51.0% | 1129 | 413 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) |
+| Downside (selector) | $3,219,996 | $-282,303 | $-1,515,859 | $-29.17 | 58.6% | 81.4% | 1129 | 413 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) |
+| Zero flights (0 flights/day) | $0 | $0 | $-1,080,000 | n.m. | n.m. | n.m. | 1129 | 388 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (5 pass, 5 n/a) |
+| Zero completion rate | $0 | $0 | $-1,080,000 | n.m. | n.m. | n.m. | 1129 | 388 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (5 pass, 5 n/a) |
+| Completion rate 50% | $2,453,834 | $672,771 | $-407,229 | $125.14 | 46.0% | 76.8% | 1129 | 413 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) |
+| Completion rate 100% | $4,907,669 | $1,345,543 | $265,543 | $125.14 | 46.0% | 61.4% | 1129 | 413 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) |
+| Zero load factor | $0 | $-3,064,320 | $-4,144,320 | $-300.00 | 46.0% | 62.2% | 1129 | 413 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (9 pass, 1 n/a) |
+| Full load factor, no growth | $7,150,080 | $3,595,469 | $2,515,469 | $352.00 | 46.0% | 62.2% | 1129 | 413 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) |
+| Full load factor + demand growth (cap) | $7,150,080 | $3,595,469 | $2,515,469 | $352.00 | 46.0% | 62.2% | 1129 | 413 | 0 | ALL 20 CHECKS PASS; 11 capped month(s) | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) |
+| Higher flight op. cost ($600/flight) | $4,662,285 | $-1,786,054 | $-2,866,054 | $-174.86 | 92.0% | 108.2% | 1129 | 413 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) |
+| Fare below cost per passenger ($10) | $266,416 | $-3,117,603 | $-4,197,603 | $-305.22 | n.m. | n.m. | 1129 | 387 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (4 pass, 6 n/a) |
+| Sensitivity: $5 fare step, LF 50%-85% by 2.5pt | $4,662,285 | $1,278,266 | $198,266 | $125.14 | 46.0% | 62.2% | 1129 | 413 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) |
+| Sensitivity: wider $40 fare step, $0 band | $4,662,285 | $1,278,266 | $198,266 | $125.14 | 46.0% | 62.2% | 1129 | 413 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) |
+| Sensitivity: LF axis past 100% (should FAIL) | $4,662,285 | $1,278,266 | $198,266 | $125.14 | 46.0% | 62.2% | 1129 | 413 | 0 | REVIEW: 1 CHECK(S) FAILING | REVIEW: 1 FAILING |
 
 The breakeven load factor does not change with load factor (it depends only on fare, unit costs,
 seats and fixed costs), so it is the same in the zero-load-factor and full-load-factor cases. That is expected.
 Lowering the completion rate leaves the flight-level breakeven unchanged and raises the route
 breakeven, because the same fixed costs are spread over fewer flights. A $600 cost per flight gives a route breakeven of
 108.2% (not reachable). A fare below the variable cost per passenger gives "n.m.".
+
+## Sensitivity Analysis tab (added later)
+The tab shows contribution profit per completed flight = seats × load factor × (fare −
+variable cost per passenger) − direct flight cost. It uses the Base scenario's Month 1 inputs,
+all linked to the Assumptions tab (Base column). It has 9 fare columns centred on the Base fare
+and 15 load factor rows, with conditional formatting for loss-making, breakeven (within ± a
+$ band) and profitable combinations.
+
+- **Breakeven definitions.** Flight-level breakeven load factor = direct flight cost ÷ (seats ×
+  (fare − variable cost per passenger)). Route-level breakeven load factor = (direct flight
+  cost + fixed route cost per completed flight) ÷ the same denominator. Both are shown at the
+  Base fare and in every fare column.
+- **What the audit checks.** For every run, the audit recomputes the fare and load factor
+  axes, all 135 matrix cells, both breakeven rows, the legend counts and the linked inputs in
+  Python. It also confirms that contribution is $0 at each column's flight-level breakeven,
+  that Month 1 route operating profit is $0 at the route-level breakeven, and that the
+  insight text contains no errors.
+- **The tab's own checks.** It has 10 checks, including reconciliation of the Base cell and
+  both breakeven values to the Month 1 Base calculation on Scenario Comparison. Its status
+  feeds the Financial Model's overall status as check #20.
+- **Extra runs.** Three runs edit only the matrix settings: a $5 fare step with a finer load
+  factor axis; a $40 fare step with a $0 band; and a load factor axis that runs past 100%.
+  The last was correctly flagged FAIL by both the sheet and the overall status.
+- **Existing tabs preserved.** I compared every cell with the previous version. Scenario
+  Comparison is unchanged. Assumptions and Read Me only point to the moved status cell, and
+  Read Me's workbook map describes the new tab. Financial Model gained one check row, which
+  moves the two rows below it down by one. No financial value changed.
 
 ## Limitations
 - **Excel not tested.** All recalculation was done in LibreOffice. The workbook uses only
@@ -64,5 +94,12 @@ breakeven, because the same fixed costs are spread over fewer flights. A $600 co
   of $192.63.
 - **Annual breakeven assumes one load factor for the whole year.** It is calculated from annual
   totals, so it is the single uniform load factor at which the year breaks even.
+- **The sensitivity matrix is Month 1 and Base only.** It does not include fare, demand or
+  cost growth, and it does not follow the active-scenario selector.
+- **The fare axis is floored at $0.** When the Base fare is smaller than 4 fare steps, the
+  columns are no longer centred on it, and the Base-cell check reports N/A.
+- **The Base-cell highlight may not show.** The bold box and underline come from conditional
+  formatting, which LibreOffice's PDF export did not show. The text callout beside the matrix
+  shows the same value either way.
 - **Scope of the edge cases.** Each was applied to the Base case, or to all cases for the shared
   route inputs. Negative and above-100% inputs are tested separately in `validate_model.py`.
