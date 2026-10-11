@@ -1,0 +1,1111 @@
+"""
+Build the Joby Aviation illustrative air taxi route financial model (Excel).
+
+ILLUSTRATIVE PROTOTYPE ONLY. Every number written as an input below is a
+hypothetical assumption chosen for a case study. None of it is a Joby
+Aviation forecast, guidance, or company-reported figure.
+
+Usage:
+    python build_joby_model.py [output_path]
+
+Output defaults to Joby_Financial_Model.xlsx in this directory. Every
+calculated cell is an Excel formula linked back to the Assumptions tab, and
+the workbook is flagged to recalculate fully when opened. Run
+validate_model.py afterwards to recalculate with LibreOffice and check
+the results.
+
+Layout conventions (kept identical across tabs so new tabs can plug in):
+  * Assumptions: column F ("Active Case") is the single source every model
+    formula reads. Columns C/D/E hold Base/Upside/Downside inputs.
+  * Financial Model and the Scenario Comparison engine: months in C..N,
+    annual total in O, annual basis label in P.
+  * Key inputs and outputs are exposed as workbook-level defined names
+    (inp_* / out_*), so a future Sensitivity Analysis or Executive Dashboard
+    tab can reference them without hard-coding cell addresses.
+"""
+
+import datetime as dt
+import sys
+from pathlib import Path
+
+from openpyxl import Workbook
+from openpyxl.formatting.rule import CellIsRule, FormulaRule
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
+from openpyxl.workbook.defined_name import DefinedName
+from openpyxl.worksheet.datavalidation import DataValidation
+
+# --------------------------------------------------------------------------
+# Style palette: navy / white / light blue
+# --------------------------------------------------------------------------
+NAVY = "1F3864"
+MID_BLUE = "2F5597"
+LIGHT_BLUE = "DDEBF7"
+PALE_BLUE = "F2F7FC"
+INPUT_FILL_HEX = "FFF2CC"  # pale yellow: marks cells the user may edit
+WHITE = "FFFFFF"
+GREY = "7F7F7F"
+
+FONT_NAME = "Arial"
+F_INPUT = Font(name=FONT_NAME, size=10, color="0000FF")  # editable input
+F_CALC = Font(name=FONT_NAME, size=10, color="000000")  # formula
+F_LINK = Font(name=FONT_NAME, size=10, color="008000")  # link to another tab
+F_BODY = Font(name=FONT_NAME, size=10, color="000000")
+F_BOLD = Font(name=FONT_NAME, size=10, bold=True, color="000000")
+F_BOLD_CALC = Font(name=FONT_NAME, size=10, bold=True, color="000000")
+F_NOTE = Font(name=FONT_NAME, size=9, italic=True, color=GREY)
+F_TITLE = Font(name=FONT_NAME, size=16, bold=True, color=WHITE)
+F_SUBTITLE = Font(name=FONT_NAME, size=10, italic=True, color=WHITE)
+F_HEADER = Font(name=FONT_NAME, size=10, bold=True, color=WHITE)
+F_SECTION = Font(name=FONT_NAME, size=10, bold=True, color=NAVY)
+F_WARN = Font(name=FONT_NAME, size=10, bold=True, color="C00000")
+
+FILL_NAVY = PatternFill("solid", fgColor=NAVY)
+FILL_MID = PatternFill("solid", fgColor=MID_BLUE)
+FILL_LIGHT = PatternFill("solid", fgColor=LIGHT_BLUE)
+FILL_PALE = PatternFill("solid", fgColor=PALE_BLUE)
+FILL_INPUT = PatternFill("solid", fgColor=INPUT_FILL_HEX)
+FILL_PASS = PatternFill("solid", fgColor="C6EFCE")
+FILL_FAIL = PatternFill("solid", fgColor="FFC7CE")
+
+THIN = Side(style="thin", color="BFBFBF")
+B_INPUT = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+B_TOP = Border(top=Side(style="thin", color=NAVY))
+B_TOTAL = Border(top=Side(style="thin", color=NAVY), bottom=Side(style="double", color=NAVY))
+
+A_LEFT = Alignment(horizontal="left", vertical="center")
+A_WRAP = Alignment(horizontal="left", vertical="top", wrap_text=True)
+A_CENTER = Alignment(horizontal="center", vertical="center")
+A_RIGHT = Alignment(horizontal="right", vertical="center")
+
+# Number formats (zeros render as "-", negatives in parentheses)
+FMT_USD = '$#,##0;($#,##0);"-"'
+FMT_USD2 = '$#,##0.00;($#,##0.00);"-"'
+FMT_NUM = '#,##0;(#,##0);"-"'
+FMT_NUM1 = '#,##0.0;(#,##0.0);"-"'
+FMT_PCT = '0.0%;(0.0%);"-"'
+FMT_PCT2 = '0.00%;(0.00%);"0.00%"'
+FMT_IDX = '0.0000'
+FMT_DATE = 'mmm-yy'
+FMT_INT = '0'
+
+DISCLAIMER = (
+    "ILLUSTRATIVE PROTOTYPE - all inputs are hypothetical case-study assumptions, "
+    "not Joby Aviation forecasts, guidance, or company-reported figures."
+)
+
+MONTHS = 12
+FIRST_MONTH_COL = 3  # column C
+MONTH_COLS = [get_column_letter(FIRST_MONTH_COL + i) for i in range(MONTHS)]  # C..N
+FIRST_M, LAST_M = MONTH_COLS[0], MONTH_COLS[-1]
+TOTAL_COL = get_column_letter(FIRST_MONTH_COL + MONTHS)  # O
+BASIS_COL = get_column_letter(FIRST_MONTH_COL + MONTHS + 1)  # P
+
+SCEN_COLS = {"Base": "C", "Upside": "D", "Downside": "E"}
+ACTIVE_COL = "F"
+AS = "Assumptions"
+FM = "'Financial Model'"
+SC = "'Scenario Comparison'"
+
+
+# --------------------------------------------------------------------------
+# Helpers
+# --------------------------------------------------------------------------
+def style(cell, font=None, fill=None, fmt=None, align=None, border=None):
+    if font is not None:
+        cell.font = font
+    if fill is not None:
+        cell.fill = fill
+    if fmt is not None:
+        cell.number_format = fmt
+    if align is not None:
+        cell.alignment = align
+    if border is not None:
+        cell.border = border
+    return cell
+
+
+def title_block(ws, title, subtitle, last_col):
+    """Navy banner across rows 1-2 with a disclaimer line in row 3."""
+    for row in (1, 2):
+        for c in range(1, last_col + 1):
+            ws.cell(row=row, column=c).fill = FILL_NAVY
+    style(ws.cell(row=1, column=1, value=title), font=F_TITLE, align=A_LEFT)
+    style(ws.cell(row=2, column=1, value=subtitle), font=F_SUBTITLE, align=A_LEFT)
+    ws.row_dimensions[1].height = 26
+    ws.row_dimensions[2].height = 18
+    style(ws.cell(row=3, column=1, value=DISCLAIMER), font=F_WARN, align=A_LEFT)
+
+
+def header_row(ws, row, values, last_col=None):
+    last_col = last_col or len(values)
+    for c in range(1, last_col + 1):
+        cell = ws.cell(row=row, column=c)
+        cell.fill = FILL_MID
+        cell.font = F_HEADER
+        cell.alignment = A_CENTER if c > 1 else A_LEFT
+    for c, v in enumerate(values, start=1):
+        ws.cell(row=row, column=c, value=v)
+    ws.row_dimensions[row].height = 20
+
+
+def section_row(ws, row, text, last_col):
+    for c in range(1, last_col + 1):
+        ws.cell(row=row, column=c).fill = FILL_LIGHT
+    style(ws.cell(row=row, column=1, value=text), font=F_SECTION, align=A_LEFT)
+
+
+def add_name(wb, name, ref):
+    wb.defined_names[name] = DefinedName(name, attr_text=ref)
+
+
+# --------------------------------------------------------------------------
+# Assumption definitions (hypothetical, illustrative values)
+# --------------------------------------------------------------------------
+# key, label, unit, value(s), number format, source / notes
+GENERAL_INPUTS = [
+    ("route_name", "Route name", "text",
+     "Route A: Downtown - Airport", "@",
+     "Illustrative placeholder (e.g., downtown vertiport to regional airport, ~15-25 miles). Not an announced Joby route."),
+    ("service_type", "Service / aircraft type", "text",
+     "Piloted eVTOL air taxi", "@",
+     "Illustrative 4-passenger piloted eVTOL configuration. Add a row per aircraft type when extending to a multi-aircraft fleet."),
+    ("start_date", "Model start month", "date", dt.date(2027, 1, 1), FMT_DATE,
+     "Illustrative timing used to label periods only. Not a Joby launch date."),
+    ("capacity", "Aircraft passenger seats per flight", "seats / flight", 4, FMT_NUM,
+     "Illustrative; consistent with a pilot + 4 passenger eVTOL layout. Verify against current company disclosures before external use."),
+    ("flights_per_day", "Scheduled flights per operating day", "flights / day", 32, FMT_NUM,
+     "Illustrative: e.g., 2 aircraft x 16 one-way flights over a ~14-hour operating window. One-way flights."),
+    ("op_days", "Operating days per month", "days / month", 28, FMT_NUM,
+     "Illustrative: allows ~2-3 non-operating days per month for weather, maintenance, holidays."),
+]
+
+# key, label, unit, (base, upside, downside), fmt, notes
+SCENARIO_INPUTS = [
+    ("completion", "Flight completion rate", "% of scheduled", (0.95, 0.97, 0.90), FMT_PCT,
+     "Illustrative. Share of scheduled flights actually flown (weather, technical, ATC cancellations)."),
+    ("fare", "Average fare per passenger (Month 1)", "$ / passenger", (175.0, 190.0, 160.0), FMT_USD2,
+     "Illustrative premium-rideshare-style price point for a ~15-25 mile urban trip. Net of discounts, excl. taxes."),
+    ("load_factor", "Passenger load factor (Month 1)", "% of seats", (0.60, 0.68, 0.52), FMT_PCT,
+     "Illustrative. Passengers flown / available seats on completed flights in Month 1."),
+    ("var_cost_flight", "Variable operating cost per completed flight (Month 1)", "$ / completed flight",
+     (300.0, 280.0, 320.0), FMT_USD2,
+     "Illustrative. Energy/charging, pilot cost per flight, maintenance reserves, landing & vertiport usage fees."),
+    ("var_cost_pax", "Variable cost per passenger (Month 1)", "$ / passenger", (12.0, 10.0, 15.0), FMT_USD2,
+     "Illustrative. Payment processing, booking/distribution, passenger handling and per-passenger fees."),
+    ("fixed_monthly", "Monthly route-specific fixed costs (Month 1)", "$ / month",
+     (90000.0, 85000.0, 100000.0), FMT_USD,
+     "Illustrative. Route-dedicated vertiport lease, ground staff, local marketing. Excludes corporate overhead, R&D, certification, aircraft depreciation."),
+]
+
+GROWTH_INPUTS = [
+    ("fare_growth", "Monthly fare growth rate", "% per month", (0.0, 0.0025, -0.005), FMT_PCT2,
+     "Illustrative. Compounds monthly on the Month 1 fare. Negative = promotional pricing pressure."),
+    ("demand_growth", "Monthly demand growth rate", "% per month", (0.015, 0.020, 0.005), FMT_PCT2,
+     "Illustrative. Compounds monthly on the Month 1 load factor (modelled load factor capped at 100%)."),
+    ("cost_growth", "Monthly operating cost growth rate", "% per month", (0.0, -0.0025, 0.005), FMT_PCT2,
+     "Illustrative. Compounds monthly on variable cost per flight, variable cost per passenger and fixed costs. Negative = efficiency gains."),
+]
+
+SCENARIO_NARRATIVE = {
+    "Base": "Steady launch: 95% completion, $175 fare, 60% load factor building ~1.5%/month, flat unit costs.",
+    "Upside": "Strong adoption: higher fare and load factor, faster demand ramp, better reliability and modest cost efficiencies.",
+    "Downside": "Soft launch: discounted fares, weaker demand, more weather/technical cancellations and cost inflation.",
+}
+
+
+# --------------------------------------------------------------------------
+# Assumptions tab
+# --------------------------------------------------------------------------
+def build_assumptions(wb):
+    ws = wb.create_sheet(AS)
+    A = {}
+    last_col = 7
+    title_block(ws, "Assumptions - Illustrative Air Taxi Route",
+                "Edit blue cells only. Column F (Active Case) feeds every model calculation.", last_col)
+
+    # Scenario selector
+    ws["A5"] = "Active scenario (select)"
+    ws["A5"].font = F_BOLD
+    style(ws["C5"], font=F_INPUT, fill=FILL_INPUT, align=A_CENTER, border=B_INPUT)
+    ws["C5"] = "Base"
+    ws["D5"] = "<- choose Base, Upside or Downside; drives the Financial Model tab"
+    ws["D5"].font = F_NOTE
+    ws["A6"] = "Active scenario index"
+    ws["A6"].font = F_BODY
+    ws["C6"] = "=MATCH($C$5,$C$9:$E$9,0)"
+    style(ws["C6"], font=F_CALC, align=A_CENTER, fmt=FMT_INT)
+    ws["A7"] = "Model integrity status"
+    ws["A7"].font = F_BODY
+    A["scenario"] = 5
+    A["scenario_idx"] = 6
+    A["status"] = 7  # filled after the Financial Model checks exist
+
+    dv = DataValidation(type="list", formula1='"Base,Upside,Downside"', allow_blank=False,
+                        showErrorMessage=True, errorTitle="Scenario",
+                        error="Choose Base, Upside or Downside.")
+    ws.add_data_validation(dv)
+    dv.add("C5")
+
+    # Legend (column G, rows 5-7 + row 4 label)
+    ws["G4"] = "Legend"
+    ws["G4"].font = F_BOLD
+    style(ws["G5"], font=F_INPUT, fill=FILL_INPUT, border=B_INPUT)
+    ws["G5"] = "Blue text / yellow fill = editable input (hypothetical, illustrative)"
+    ws["G6"] = "Black text = formula (do not overwrite)"
+    ws["G6"].font = F_CALC
+    ws["G7"] = "Green text = link pulled from another tab"
+    ws["G7"].font = F_LINK
+
+    header_row(ws, 9, ["Parameter", "Unit", "Base", "Upside", "Downside",
+                       "Active Case", "Source / Notes"], last_col)
+
+    row = 10
+    section_row(ws, row, "1. Route & Service Setup (applies to all scenarios)", last_col)
+    row += 1
+    for key, label, unit, value, fmt, note in GENERAL_INPUTS:
+        ws.cell(row=row, column=1, value=label).font = F_BODY
+        ws.cell(row=row, column=2, value=unit).font = F_BODY
+        c = ws.cell(row=row, column=3, value=value)
+        style(c, font=F_INPUT, fill=FILL_INPUT, fmt=fmt, border=B_INPUT,
+              align=A_LEFT if unit == "text" else A_RIGHT)
+        if unit == "text":
+            # long text: let it spill across the scenario columns visually
+            ws.merge_cells(start_row=row, start_column=3, end_row=row, end_column=5)
+            style(ws.cell(row=row, column=6, value=f"=$C{row}"), font=F_CALC, fmt=fmt,
+                  align=A_LEFT)
+        else:
+            style(ws.cell(row=row, column=4, value="all cases"), font=F_NOTE, align=A_CENTER)
+            style(ws.cell(row=row, column=5, value="all cases"), font=F_NOTE, align=A_CENTER)
+            style(ws.cell(row=row, column=6, value=f"=$C{row}"), font=F_CALC, fmt=fmt,
+                  align=A_RIGHT, fill=FILL_PALE)
+        style(ws.cell(row=row, column=7, value=note), font=F_NOTE, align=A_WRAP)
+        A[key] = row
+        row += 1
+
+    def scenario_block(title, items, row):
+        section_row(ws, row, title, last_col)
+        row += 1
+        for key, label, unit, vals, fmt, note in items:
+            ws.cell(row=row, column=1, value=label).font = F_BODY
+            ws.cell(row=row, column=2, value=unit).font = F_BODY
+            for col, v in zip("CDE", vals):
+                style(ws[f"{col}{row}"], font=F_INPUT, fill=FILL_INPUT, fmt=fmt, border=B_INPUT,
+                      align=A_RIGHT)
+                ws[f"{col}{row}"] = v
+            style(ws.cell(row=row, column=6,
+                          value=f"=INDEX($C{row}:$E{row},$C${A['scenario_idx']})"),
+                  font=F_BOLD_CALC, fmt=fmt, align=A_RIGHT, fill=FILL_PALE)
+            style(ws.cell(row=row, column=7, value=note), font=F_NOTE, align=A_WRAP)
+            A[key] = row
+            row += 1
+        return row
+
+    row += 1
+    row = scenario_block("2. Scenario Operating & Unit Economics Drivers", SCENARIO_INPUTS, row)
+    row += 1
+    row = scenario_block("3. Optional Monthly Growth Rates (compounding from Month 1)",
+                         GROWTH_INPUTS, row)
+
+    # Input validation (blocks impossible entries at the source)
+    pct_dv = DataValidation(type="decimal", operator="between", formula1="0", formula2="1",
+                            showErrorMessage=True, errorTitle="Percentage input",
+                            error="Enter a rate between 0% and 100%.")
+    nonneg_dv = DataValidation(type="decimal", operator="greaterThanOrEqual", formula1="0",
+                               showErrorMessage=True, errorTitle="Non-negative input",
+                               error="Enter a value of zero or more.")
+    growth_dv = DataValidation(type="decimal", operator="between", formula1="-0.5",
+                               formula2="0.5", showErrorMessage=True, errorTitle="Growth rate",
+                               error="Enter a monthly rate between -50% and +50%.")
+    for d in (pct_dv, nonneg_dv, growth_dv):
+        ws.add_data_validation(d)
+    for k in ("completion", "load_factor"):
+        pct_dv.add(f"C{A[k]}:E{A[k]}")
+    for k in ("fare", "var_cost_flight", "var_cost_pax", "fixed_monthly"):
+        nonneg_dv.add(f"C{A[k]}:E{A[k]}")
+    for k in ("capacity", "flights_per_day", "op_days"):
+        nonneg_dv.add(f"C{A[k]}")
+    for k in ("fare_growth", "demand_growth", "cost_growth"):
+        growth_dv.add(f"C{A[k]}:E{A[k]}")
+
+    row += 1
+    section_row(ws, row, "4. Scenario Definitions", last_col)
+    row += 1
+    for name, text in SCENARIO_NARRATIVE.items():
+        ws.cell(row=row, column=1, value=name).font = F_BOLD
+        ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=7)
+        style(ws.cell(row=row, column=2, value=text), font=F_BODY, align=A_WRAP)
+        row += 1
+
+    row += 1
+    section_row(ws, row, "5. Methodology Notes", last_col)
+    row += 1
+    notes = [
+        "Only column F (Active Case) is referenced by the Financial Model; it picks Base/Upside/Downside via INDEX on the scenario index.",
+        "Rates are stored as fractions (0.60 = 60%). Monthly growth compounds: value in month m = Month 1 value x (1 + rate)^(m - 1).",
+        "Volumes are expected values (scheduled flights x completion rate), so completed flights and passengers may be fractional.",
+        "Fixed costs here are route-specific only. Corporate overhead, R&D, certification and aircraft ownership costs are outside route operating profit.",
+        "To add a route: copy columns C:F into a new route block (or add a Route ID dimension) and point a new Financial Model block at it.",
+    ]
+    for n in notes:
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=7)
+        style(ws.cell(row=row, column=1, value="- " + n), font=F_BODY, align=A_WRAP)
+        ws.row_dimensions[row].height = 26
+        row += 1
+
+    widths = {"A": 50, "B": 20, "C": 15, "D": 15, "E": 15, "F": 16, "G": 90}
+    for col, w in widths.items():
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "C10"
+    ws.sheet_view.showGridLines = False
+    return ws, A
+
+
+def act(A, key, absolute=True):
+    """Reference to the Active Case cell for an assumption."""
+    return f"{AS}!$F${A[key]}"
+
+
+def scen_ref(A, key, col):
+    return f"{AS}!${col}${A[key]}"
+
+
+# --------------------------------------------------------------------------
+# Financial Model tab
+# --------------------------------------------------------------------------
+def build_financial_model(wb, A):
+    ws = wb.create_sheet("Financial Model")
+    R = {}
+    last_col = 16
+    title_block(ws, "Financial Model - Monthly Route Economics (12 months)",
+                "Active scenario only. All values are formulas linked to the Assumptions tab.",
+                last_col)
+    ws["A4"] = (f'="Route: "&{act(A, "route_name")}&"   |   Aircraft: "&{act(A, "service_type")}'
+                f'&"   |   Active scenario: "&{AS}!$C${A["scenario"]}')
+    ws["A4"].font = Font(name=FONT_NAME, size=10, bold=True, color="008000")
+
+    header_row(ws, 6, ["Line item", "Unit"] + [f"Month {i + 1}" for i in range(MONTHS)]
+               + ["FY Total", "Annual basis"], last_col)
+    # Month index and period date
+    R["month"] = 7
+    R["period"] = 8
+    ws["A7"], ws["B7"] = "Month index", "#"
+    ws["A8"], ws["B8"] = "Period", "month"
+    for i, col in enumerate(MONTH_COLS):
+        if i == 0:
+            style(ws[f"{col}7"], font=F_CALC, fmt=FMT_INT, align=A_CENTER)
+            ws[f"{col}7"] = 1
+        else:
+            ws[f"{col}7"] = f"={MONTH_COLS[i - 1]}7+1"
+            style(ws[f"{col}7"], font=F_CALC, fmt=FMT_INT, align=A_CENTER)
+        ws[f"{col}8"] = f"=EDATE({act(A, 'start_date')},{col}$7-1)"
+        style(ws[f"{col}8"], font=F_LINK, fmt=FMT_DATE, align=A_CENTER)
+    for r in (7, 8):
+        for c in range(1, last_col + 1):
+            ws.cell(row=r, column=c).fill = FILL_PALE
+        ws.cell(row=r, column=1).font = F_BOLD
+
+    row = 9
+
+    def line(key, label, unit, month_formula, fmt, total=None, basis="", font=F_CALC,
+             bold=False, border=None):
+        """Write one model line. month_formula(col) -> formula string."""
+        nonlocal row
+        R[key] = row
+        ws.cell(row=row, column=1, value=label).font = F_BOLD if bold else F_BODY
+        ws.cell(row=row, column=2, value=unit).font = F_NOTE
+        for col in MONTH_COLS:
+            c = ws[f"{col}{row}"]
+            c.value = month_formula(col)
+            style(c, font=Font(name=FONT_NAME, size=10, bold=bold, color=font.color),
+                  fmt=fmt, align=A_RIGHT, border=border)
+        c = ws[f"{TOTAL_COL}{row}"]
+        if total is not None:
+            c.value = total
+        # style the total cell even when its formula is written later
+        style(c, font=Font(name=FONT_NAME, size=10, bold=True, color="000000"), fmt=fmt,
+              align=A_RIGHT, fill=FILL_PALE, border=border)
+        style(ws[f"{BASIS_COL}{row}"], font=F_NOTE, align=A_LEFT)
+        ws[f"{BASIS_COL}{row}"] = basis
+        row += 1
+
+    def rng(key):
+        return f"{FIRST_M}{R[key]}:{LAST_M}{R[key]}"
+
+    def tot(key):
+        return f"{TOTAL_COL}{R[key]}"
+
+    def sum_total(key):
+        return f"=SUM({rng(key)})"
+
+    def section(text):
+        nonlocal row
+        row += 1
+        section_row(ws, row, text, last_col)
+        row += 1
+
+    # ---- Driver build -----------------------------------------------------
+    section("A. Driver Build (Active Case from Assumptions)")
+    line("op_days", "Operating days", "days", lambda c: f"={act(A, 'op_days')}", FMT_NUM,
+         None, "", font=F_LINK)
+    ws[tot("op_days")] = sum_total("op_days")
+    style(ws[tot("op_days")], font=F_BOLD, fmt=FMT_NUM, align=A_RIGHT)
+    ws[f"{BASIS_COL}{R['op_days']}"] = "Sum"
+    line("fpd", "Scheduled flights per operating day", "flights / day",
+         lambda c: f"={act(A, 'flights_per_day')}", FMT_NUM, None, "", font=F_LINK)
+    line("fare_idx", "Fare growth index", "index",
+         lambda c: f"=(1+{act(A, 'fare_growth')})^({c}${R['month']}-1)", FMT_IDX)
+    line("dem_idx", "Demand growth index", "index",
+         lambda c: f"=(1+{act(A, 'demand_growth')})^({c}${R['month']}-1)", FMT_IDX)
+    line("cost_idx", "Operating cost growth index", "index",
+         lambda c: f"=(1+{act(A, 'cost_growth')})^({c}${R['month']}-1)", FMT_IDX)
+    line("comp", "Flight completion rate", "% of scheduled",
+         lambda c: f"={act(A, 'completion')}", FMT_PCT, None, "", font=F_LINK)
+    line("lf", "Passenger load factor", "% of seats",
+         lambda c: f"=MIN(1,MAX(0,{act(A, 'load_factor')}*{c}{R['dem_idx']}))", FMT_PCT)
+    line("vcf", "Variable operating cost per completed flight", "$ / flight",
+         lambda c: f"={act(A, 'var_cost_flight')}*{c}{R['cost_idx']}", FMT_USD2)
+    line("vcp", "Variable cost per passenger", "$ / passenger",
+         lambda c: f"={act(A, 'var_cost_pax')}*{c}{R['cost_idx']}", FMT_USD2)
+
+    # ---- Operating metrics ---------------------------------------------------
+    section("B. Operating Metrics")
+    line("sched", "Scheduled flights", "flights",
+         lambda c: f"={c}{R['op_days']}*{c}{R['fpd']}", FMT_NUM, None, "Sum")
+    line("completed", "Completed flights", "flights",
+         lambda c: f"={c}{R['sched']}*{c}{R['comp']}", FMT_NUM, None, "Sum")
+    line("seats", "Available passenger seats", "seats",
+         lambda c: f"={c}{R['completed']}*{act(A, 'capacity')}", FMT_NUM, None, "Sum")
+    line("pax", "Passengers flown", "passengers",
+         lambda c: f"={c}{R['seats']}*{c}{R['lf']}", FMT_NUM, None, "Sum", bold=True)
+    for k in ("sched", "completed", "seats", "pax"):
+        ws[tot(k)] = sum_total(k)
+
+    # ---- Route P&L ----------------------------------------------------------
+    section("C. Route P&L")
+    line("fare", "Average fare", "$ / passenger",
+         lambda c: f"={act(A, 'fare')}*{c}{R['fare_idx']}", FMT_USD2, None,
+         "Weighted avg (revenue / passengers)")
+    line("revenue", "Passenger revenue", "$",
+         lambda c: f"={c}{R['pax']}*{c}{R['fare']}", FMT_USD, None, "Sum", bold=True)
+    line("flight_cost", "Direct flight operating costs", "$",
+         lambda c: f"={c}{R['completed']}*{c}{R['vcf']}", FMT_USD, None, "Sum")
+    line("pax_cost", "Passenger-variable costs", "$",
+         lambda c: f"={c}{R['pax']}*{c}{R['vcp']}", FMT_USD, None, "Sum")
+    line("tvc", "Total variable costs", "$",
+         lambda c: f"={c}{R['flight_cost']}+{c}{R['pax_cost']}", FMT_USD, None, "Sum",
+         border=B_TOP)
+    line("contrib", "Contribution profit (flight-level)", "$",
+         lambda c: f"={c}{R['revenue']}-{c}{R['tvc']}", FMT_USD, None, "Sum", bold=True)
+    line("cm_pct", "Contribution margin", "% of revenue",
+         lambda c: f"=IF({c}{R['revenue']}=0,0,{c}{R['contrib']}/{c}{R['revenue']})", FMT_PCT,
+         None, "Weighted (annual contribution / revenue)")
+    line("contrib_flt", "Contribution profit per completed flight", "$ / flight",
+         lambda c: f"=IF({c}{R['completed']}=0,0,{c}{R['contrib']}/{c}{R['completed']})",
+         FMT_USD2, None, "Weighted (annual contribution / flights)")
+    line("fixed", "Fixed route costs", "$",
+         lambda c: f"={act(A, 'fixed_monthly')}*{c}{R['cost_idx']}", FMT_USD, None, "Sum")
+    line("rop", "Route operating profit / (loss)", "$",
+         lambda c: f"={c}{R['contrib']}-{c}{R['fixed']}", FMT_USD, None, "Sum", bold=True,
+         border=B_TOTAL)
+    line("rom", "Route operating margin", "% of revenue",
+         lambda c: f"=IF({c}{R['revenue']}=0,0,{c}{R['rop']}/{c}{R['revenue']})", FMT_PCT,
+         None, "Weighted (annual route op. profit / revenue)")
+    line("cum_rop", "Cumulative route operating profit / (loss)", "$",
+         lambda c: (f"={c}{R['rop']}" if c == FIRST_M else
+                    f"={get_column_letter(FIRST_MONTH_COL + MONTH_COLS.index(c) - 1)}"
+                    f"{R['cum_rop']}+{c}{R['rop']}"),
+         FMT_USD, None, "End of period")
+
+    for k in ("revenue", "flight_cost", "pax_cost", "tvc", "contrib", "fixed", "rop"):
+        ws[tot(k)] = sum_total(k)
+    ws[tot("fare")] = f"=IF({tot('pax')}=0,0,{tot('revenue')}/{tot('pax')})"
+    ws[tot("cm_pct")] = f"=IF({tot('revenue')}=0,0,{tot('contrib')}/{tot('revenue')})"
+    ws[tot("contrib_flt")] = f"=IF({tot('completed')}=0,0,{tot('contrib')}/{tot('completed')})"
+    ws[tot("rom")] = f"=IF({tot('revenue')}=0,0,{tot('rop')}/{tot('revenue')})"
+    ws[tot("cum_rop")] = f"={LAST_M}{R['cum_rop']}"
+
+    # Weighted annual rates for the driver rows
+    ws[tot("comp")] = f"=IF({tot('sched')}=0,0,{tot('completed')}/{tot('sched')})"
+    ws[f"{BASIS_COL}{R['comp']}"] = "Weighted (completed / scheduled)"
+    ws[tot("lf")] = f"=IF({tot('seats')}=0,0,{tot('pax')}/{tot('seats')})"
+    ws[f"{BASIS_COL}{R['lf']}"] = "Weighted (passengers / seats)"
+    ws[tot("vcf")] = f"=IF({tot('completed')}=0,0,{tot('flight_cost')}/{tot('completed')})"
+    ws[f"{BASIS_COL}{R['vcf']}"] = "Weighted (flight costs / flights)"
+    ws[tot("vcp")] = f"=IF({tot('pax')}=0,0,{tot('pax_cost')}/{tot('pax')})"
+    ws[f"{BASIS_COL}{R['vcp']}"] = "Weighted (pax costs / passengers)"
+    ws[tot("fpd")] = f"=IF({tot('op_days')}=0,0,{tot('sched')}/{tot('op_days')})"
+    ws[f"{BASIS_COL}{R['fpd']}"] = "Weighted (flights / days)"
+    for k, fmt in (("comp", FMT_PCT), ("lf", FMT_PCT), ("vcf", FMT_USD2), ("vcp", FMT_USD2),
+                   ("fpd", FMT_NUM1)):
+        style(ws[tot(k)], font=F_BOLD, fmt=fmt, align=A_RIGHT)
+
+    # ---- Breakeven ----------------------------------------------------------
+    section("D. Breakeven Analysis")
+    line("net_pax_margin", "Net margin per passenger (fare - variable cost per passenger)",
+         "$ / passenger", lambda c: f"={c}{R['fare']}-{c}{R['vcp']}", FMT_USD2, None,
+         "Weighted ((revenue - pax costs) / passengers)")
+    ws[tot("net_pax_margin")] = (f"=IF({tot('pax')}=0,0,({tot('revenue')}-{tot('pax_cost')})"
+                                 f"/{tot('pax')})")
+    line("max_margin", "Passenger margin if every seat were sold (100% load factor)", "$",
+         lambda c: f"={c}{R['seats']}*{c}{R['net_pax_margin']}", FMT_USD, None, "Sum")
+    ws[tot("max_margin")] = sum_total("max_margin")
+
+    def be(c, include_fixed):
+        costs = f"{c}{R['flight_cost']}" + (f"+{c}{R['fixed']}" if include_fixed else "")
+        return f'=IF({c}{R["max_margin"]}>0,({costs})/{c}{R["max_margin"]},"n.m.")'
+
+    line("be_flight", "Breakeven load factor - flight level (contribution = 0)", "% of seats",
+         lambda c: be(c, False), FMT_PCT, None, "Annual: total flight costs / total max margin")
+    ws[tot("be_flight")] = be(TOTAL_COL, False)
+    line("be_route", "Breakeven load factor - route (after fixed route costs)", "% of seats",
+         lambda c: be(c, True), FMT_PCT, None,
+         "Annual: (flight + fixed costs) / total max margin", bold=True)
+    ws[tot("be_route")] = be(TOTAL_COL, True)
+    line("lf_headroom", "Load factor headroom vs. route breakeven", "pct. points",
+         lambda c: f'=IF(ISNUMBER({c}{R["be_route"]}),{c}{R["lf"]}-{c}{R["be_route"]},"n.m.")',
+         FMT_PCT, None, "Positive = above breakeven")
+    ws[tot("lf_headroom")] = (f'=IF(ISNUMBER({tot("be_route")}),{tot("lf")}-{tot("be_route")},'
+                              f'"n.m.")')
+    for k in ("net_pax_margin", "be_flight", "be_route", "lf_headroom"):
+        fmt = FMT_USD2 if k == "net_pax_margin" else FMT_PCT
+        style(ws[tot(k)], font=F_BOLD, fmt=fmt, align=A_RIGHT, fill=FILL_PALE)
+    row += 0
+    note_row = row
+    ws.merge_cells(start_row=note_row, start_column=1, end_row=note_row, end_column=last_col)
+    style(ws.cell(row=note_row, column=1,
+                  value=("Breakeven load factor = (direct flight costs [+ fixed route costs]) / "
+                         "(available seats x (fare - variable cost per passenger)), holding fare, "
+                         "completion and unit costs at that period's values. Values above 100% "
+                         "mean breakeven is not reachable on current capacity. 'n.m.' = not "
+                         "meaningful (fare does not cover variable cost per passenger).")),
+          font=F_NOTE, align=A_WRAP)
+    ws.row_dimensions[note_row].height = 28
+    row += 1
+
+    # Conditional formats: highlight unreachable breakeven and losses
+    for k in ("be_flight", "be_route"):
+        ws.conditional_formatting.add(
+            f"{FIRST_M}{R[k]}:{TOTAL_COL}{R[k]}",
+            FormulaRule(formula=[f'AND(ISNUMBER({FIRST_M}{R[k]}),{FIRST_M}{R[k]}>1)'],
+                        font=Font(color="C00000", bold=True)))
+    ws.conditional_formatting.add(
+        f"{FIRST_M}{R['rop']}:{TOTAL_COL}{R['rop']}",
+        CellIsRule(operator="lessThan", formula=["0"], font=Font(color="C00000", bold=True)))
+
+    return ws, R, row, last_col
+
+
+# --------------------------------------------------------------------------
+# Scenario Comparison tab (computes all three scenarios side by side)
+# --------------------------------------------------------------------------
+def build_scenarios(wb, A):
+    ws = wb.create_sheet("Scenario Comparison")
+    last_col = 16
+    title_block(ws, "Scenario Comparison - Base / Upside / Downside",
+                "All three cases are computed simultaneously in the engine below, independent "
+                "of the active-scenario selector.", last_col)
+    S = {}
+
+    # ---- Engine (built first so the summary can reference its rows) ---------
+    engine_start = 50
+    E = {s: {} for s in SCEN_COLS}
+    row = engine_start
+    section_row(ws, row, "Scenario Calculation Engine (monthly; same logic as the Financial "
+                          "Model tab)", last_col)
+    row += 1
+
+    def eline(s, key, label, unit, fn, fmt, total=None):
+        nonlocal row
+        E[s][key] = row
+        ws.cell(row=row, column=1, value=label).font = F_BODY
+        ws.cell(row=row, column=2, value=unit).font = F_NOTE
+        for c in MONTH_COLS:
+            style(ws[f"{c}{row}"], font=F_CALC, fmt=fmt, align=A_RIGHT)
+            ws[f"{c}{row}"] = fn(c)
+        if total == "SUM":
+            total = f"=SUM({FIRST_M}{row}:{LAST_M}{row})"
+        if total:
+            style(ws[f"{TOTAL_COL}{row}"], font=F_BOLD, fmt=fmt, align=A_RIGHT, fill=FILL_PALE)
+            ws[f"{TOTAL_COL}{row}"] = total
+        else:
+            ws[f"{TOTAL_COL}{row}"].fill = FILL_PALE
+        row += 1
+
+    for s, sc in SCEN_COLS.items():
+        row += 1
+        header_row(ws, row, [f"{s} case", "Unit"] + [f"Month {i + 1}" for i in range(MONTHS)]
+                   + ["FY Total", ""], last_col)
+        row += 1
+        r0 = row
+        E[s]["month"] = row
+        ws.cell(row=row, column=1, value="Month index").font = F_BODY
+        for i, c in enumerate(MONTH_COLS):
+            ws[f"{c}{row}"] = 1 if i == 0 else f"={MONTH_COLS[i - 1]}{row}+1"
+            style(ws[f"{c}{row}"], font=F_CALC, fmt=FMT_INT, align=A_CENTER)
+        row += 1
+        m = lambda c: f"{c}${r0}"  # noqa: E731
+        g = lambda k: scen_ref(A, k, sc)  # noqa: E731
+        e = E[s]
+
+        def r(k, c):
+            return f"{c}{e[k]}"
+
+        def sm(k):
+            return f"=SUM({FIRST_M}{e[k]}:{LAST_M}{e[k]})"
+
+        eline(s, "fare", "Average fare", "$ / passenger",
+              lambda c: f"={g('fare')}*(1+{g('fare_growth')})^({m(c)}-1)", FMT_USD2)
+        eline(s, "lf", "Passenger load factor", "% of seats",
+              lambda c: f"=MIN(1,MAX(0,{g('load_factor')}*(1+{g('demand_growth')})^({m(c)}-1)))",
+              FMT_PCT)
+        eline(s, "cost_idx", "Operating cost growth index", "index",
+              lambda c: f"=(1+{g('cost_growth')})^({m(c)}-1)", FMT_IDX)
+        eline(s, "sched", "Scheduled flights", "flights",
+              lambda c: f"={act(A, 'op_days')}*{act(A, 'flights_per_day')}", FMT_NUM, None)
+        ws[f"{TOTAL_COL}{e['sched']}"] = sm("sched")
+        style(ws[f"{TOTAL_COL}{e['sched']}"], font=F_BOLD, fmt=FMT_NUM, align=A_RIGHT,
+              fill=FILL_PALE)
+        eline(s, "completed", "Completed flights", "flights",
+              lambda c: f"={r('sched', c)}*{g('completion')}", FMT_NUM, "SUM")
+        eline(s, "seats", "Available passenger seats", "seats",
+              lambda c: f"={r('completed', c)}*{act(A, 'capacity')}", FMT_NUM, "SUM")
+        eline(s, "pax", "Passengers flown", "passengers",
+              lambda c: f"={r('seats', c)}*{r('lf', c)}", FMT_NUM, "SUM")
+        eline(s, "revenue", "Passenger revenue", "$",
+              lambda c: f"={r('pax', c)}*{r('fare', c)}", FMT_USD, "SUM")
+        eline(s, "flight_cost", "Direct flight operating costs", "$",
+              lambda c: f"={r('completed', c)}*{g('var_cost_flight')}*{r('cost_idx', c)}",
+              FMT_USD, "SUM")
+        eline(s, "pax_cost", "Passenger-variable costs", "$",
+              lambda c: f"={r('pax', c)}*{g('var_cost_pax')}*{r('cost_idx', c)}",
+              FMT_USD, "SUM")
+        eline(s, "tvc", "Total variable costs", "$",
+              lambda c: f"={r('flight_cost', c)}+{r('pax_cost', c)}", FMT_USD, "SUM")
+        eline(s, "contrib", "Contribution profit", "$",
+              lambda c: f"={r('revenue', c)}-{r('tvc', c)}", FMT_USD, "SUM")
+        eline(s, "fixed", "Fixed route costs", "$",
+              lambda c: f"={g('fixed_monthly')}*{r('cost_idx', c)}", FMT_USD, "SUM")
+        eline(s, "rop", "Route operating profit / (loss)", "$",
+              lambda c: f"={r('contrib', c)}-{r('fixed', c)}", FMT_USD, "SUM")
+        eline(s, "max_margin", "Passenger margin at 100% load factor", "$",
+              lambda c: f"={r('seats', c)}*({r('fare', c)}-{g('var_cost_pax')}*{r('cost_idx', c)})",
+              FMT_USD, "SUM")
+        ws.conditional_formatting.add(
+            f"{FIRST_M}{e['rop']}:{TOTAL_COL}{e['rop']}",
+            CellIsRule(operator="lessThan", formula=["0"], font=Font(color="C00000", bold=True)))
+
+    # ---- Summary table ------------------------------------------------------
+    header_row(ws, 5, ["Metric", "Unit", "Base", "Upside", "Downside", "Upside vs Base",
+                       "Downside vs Base", "Notes"], last_col)
+    row = 6
+    section_row(ws, row, "Key Scenario Assumptions (linked from Assumptions tab)", last_col)
+    row += 1
+    assumption_rows = [
+        ("completion", "Flight completion rate", "%", FMT_PCT),
+        ("fare", "Average fare (Month 1)", "$ / passenger", FMT_USD2),
+        ("load_factor", "Load factor (Month 1)", "% of seats", FMT_PCT),
+        ("var_cost_flight", "Variable cost per completed flight (Month 1)", "$ / flight", FMT_USD2),
+        ("var_cost_pax", "Variable cost per passenger (Month 1)", "$ / passenger", FMT_USD2),
+        ("fixed_monthly", "Fixed route costs (Month 1)", "$ / month", FMT_USD),
+        ("fare_growth", "Monthly fare growth", "% / month", FMT_PCT2),
+        ("demand_growth", "Monthly demand growth", "% / month", FMT_PCT2),
+        ("cost_growth", "Monthly operating cost growth", "% / month", FMT_PCT2),
+    ]
+    for key, label, unit, fmt in assumption_rows:
+        ws.cell(row=row, column=1, value=label).font = F_BODY
+        ws.cell(row=row, column=2, value=unit).font = F_NOTE
+        for s, sc in SCEN_COLS.items():
+            style(ws[f"{sc}{row}"], font=F_LINK, fmt=fmt, align=A_RIGHT)
+            ws[f"{sc}{row}"] = f"={scen_ref(A, key, sc)}"
+        for vc, sc in (("F", "D"), ("G", "E")):
+            style(ws[f"{vc}{row}"], font=F_CALC, fmt=fmt, align=A_RIGHT)
+            ws[f"{vc}{row}"] = f"={sc}{row}-C{row}"
+        row += 1
+
+    row += 1
+    section_row(ws, row, "Annual Results (12 months)", last_col)
+    row += 1
+
+    def tref(s, k):
+        return f"{TOTAL_COL}{E[s][k]}"
+
+    results = [
+        ("sched", "Scheduled flights", "flights", FMT_NUM, lambda s: f"={tref(s, 'sched')}", ""),
+        ("completed", "Completed flights", "flights", FMT_NUM,
+         lambda s: f"={tref(s, 'completed')}", ""),
+        ("pax", "Passengers flown", "passengers", FMT_NUM, lambda s: f"={tref(s, 'pax')}", ""),
+        ("lf", "Average load factor (weighted)", "% of seats", FMT_PCT,
+         lambda s: f"=IF({tref(s, 'seats')}=0,0,{tref(s, 'pax')}/{tref(s, 'seats')})",
+         "Passengers / available seats"),
+        ("fare", "Average fare (weighted)", "$ / passenger", FMT_USD2,
+         lambda s: f"=IF({tref(s, 'pax')}=0,0,{tref(s, 'revenue')}/{tref(s, 'pax')})",
+         "Revenue / passengers"),
+        ("revenue", "Annual passenger revenue", "$", FMT_USD,
+         lambda s: f"={tref(s, 'revenue')}", ""),
+        ("tvc", "Total variable costs", "$", FMT_USD, lambda s: f"={tref(s, 'tvc')}",
+         "Direct flight + passenger-variable costs"),
+        ("contrib", "Contribution profit", "$", FMT_USD, lambda s: f"={tref(s, 'contrib')}",
+         "Flight-level, before fixed route costs"),
+        ("cm_pct", "Contribution margin", "% of revenue", FMT_PCT,
+         lambda s: f"=IF({tref(s, 'revenue')}=0,0,{tref(s, 'contrib')}/{tref(s, 'revenue')})", ""),
+        ("contrib_flt", "Contribution profit per completed flight", "$ / flight", FMT_USD2,
+         lambda s: f"=IF({tref(s, 'completed')}=0,0,{tref(s, 'contrib')}/{tref(s, 'completed')})",
+         ""),
+        ("fixed", "Fixed route costs", "$", FMT_USD, lambda s: f"={tref(s, 'fixed')}", ""),
+        ("rop", "Route operating profit / (loss)", "$", FMT_USD,
+         lambda s: f"={tref(s, 'rop')}", "After route fixed costs; not EBITDA"),
+        ("rom", "Route operating margin", "% of revenue", FMT_PCT,
+         lambda s: f"=IF({tref(s, 'revenue')}=0,0,{tref(s, 'rop')}/{tref(s, 'revenue')})", ""),
+        ("be_flight", "Breakeven load factor - flight level", "% of seats", FMT_PCT,
+         lambda s: (f'=IF({tref(s, "max_margin")}>0,{tref(s, "flight_cost")}/'
+                    f'{tref(s, "max_margin")},"n.m.")'),
+         "Load factor at which contribution = 0"),
+        ("be_route", "Breakeven load factor - route", "% of seats", FMT_PCT,
+         lambda s: (f'=IF({tref(s, "max_margin")}>0,({tref(s, "flight_cost")}+{tref(s, "fixed")})/'
+                    f'{tref(s, "max_margin")},"n.m.")'),
+         "Load factor at which route operating profit = 0"),
+        ("profit_months", "Months with positive route operating profit", "months", FMT_INT,
+         lambda s: f'=COUNTIF({FIRST_M}{E[s]["rop"]}:{LAST_M}{E[s]["rop"]},">0")', ""),
+    ]
+    key_bold = {"revenue", "contrib", "rop", "contrib_flt", "be_route"}
+    for key, label, unit, fmt, fn, note in results:
+        S[key] = row
+        bold = key in key_bold
+        ws.cell(row=row, column=1, value=label).font = F_BOLD if bold else F_BODY
+        ws.cell(row=row, column=2, value=unit).font = F_NOTE
+        for s, sc in SCEN_COLS.items():
+            style(ws[f"{sc}{row}"], font=F_BOLD_CALC if bold else F_CALC, fmt=fmt, align=A_RIGHT)
+            ws[f"{sc}{row}"] = fn(s)
+        for vc, sc in (("F", "D"), ("G", "E")):
+            style(ws[f"{vc}{row}"], font=F_CALC, fmt=fmt, align=A_RIGHT)
+            ws[f"{vc}{row}"] = (f'=IF(AND(ISNUMBER({sc}{row}),ISNUMBER(C{row})),{sc}{row}-C{row},'
+                                f'"n.m.")')
+        style(ws[f"H{row}"], font=F_NOTE, align=A_LEFT)
+        ws[f"H{row}"] = note
+        row += 1
+    ws.conditional_formatting.add(
+        f"C{S['rop']}:G{S['rop']}",
+        CellIsRule(operator="lessThan", formula=["0"], font=Font(color="C00000", bold=True)))
+    ws.conditional_formatting.add(
+        f"C{S['contrib']}:G{S['contrib_flt']}",
+        CellIsRule(operator="lessThan", formula=["0"], font=Font(color="C00000", bold=True)))
+
+    row += 1
+    section_row(ws, row, "Scenario Definitions", last_col)
+    row += 1
+    for name, text in SCENARIO_NARRATIVE.items():
+        ws.cell(row=row, column=1, value=name).font = F_BOLD
+        ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=last_col)
+        style(ws.cell(row=row, column=2, value=text), font=F_BODY, align=A_LEFT)
+        row += 1
+    row += 1
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=last_col)
+    style(ws.cell(row=row, column=1,
+                  value=("Variance columns show Upside/Downside minus Base (percentage rows are "
+                         "differences in percentage points). Scenario values are illustrative.")),
+          font=F_NOTE, align=A_WRAP)
+    assert row < engine_start, "summary overlaps the engine block"
+
+    widths = {"A": 48, "B": 15}
+    for col, w in widths.items():
+        ws.column_dimensions[col].width = w
+    for c in MONTH_COLS + [TOTAL_COL]:
+        ws.column_dimensions[c].width = 14
+    ws.column_dimensions["F"].width = 17  # variance headers in the summary
+    ws.column_dimensions["G"].width = 17
+    ws.column_dimensions["H"].width = 14  # month column in the engine; notes may overflow
+    ws.column_dimensions[BASIS_COL].width = 4
+    ws.freeze_panes = "C6"
+    ws.sheet_view.showGridLines = False
+    return ws, S, E
+
+
+# --------------------------------------------------------------------------
+# Checks (bottom of the Financial Model tab)
+# --------------------------------------------------------------------------
+def build_checks(wb, fm, R, row, last_col, A, S):
+    row += 1
+    section_row(fm, row, "E. Model Integrity Checks", last_col)
+    row += 1
+    for c, v in ((1, "Check"), (3, "Result"), (4, "What it tests")):
+        style(fm.cell(row=row, column=c, value=v), font=F_HEADER, fill=FILL_MID)
+    for c in range(1, last_col + 1):
+        fm.cell(row=row, column=c).fill = FILL_MID
+    row += 1
+
+    def mrng(k):
+        return f"${FIRST_M}${R[k]}:${LAST_M}${R[k]}"
+
+    def t(k):
+        return f"${TOTAL_COL}${R[k]}"
+
+    def arng(k, cols="CE"):
+        return f"{AS}!${cols[0]}${A[k]}:${cols[1]}${A[k]}"
+
+    tol = "0.01"
+    sc_active = f"INDEX({SC}!$C${{r}}:$E${{r}},{AS}!$C${A['scenario_idx']})"
+    checks = [
+        ("Scenario selector is valid", f"ISNUMBER({AS}!$C${A['scenario_idx']})",
+         "Active scenario name matches Base, Upside or Downside."),
+        ("Input load factors within 0%-100% (all scenarios)",
+         f"AND(MIN({arng('load_factor')})>=0,MAX({arng('load_factor')})<=1)",
+         "Base/Upside/Downside Month 1 load factor inputs."),
+        ("Input completion rates within 0%-100% (all scenarios)",
+         f"AND(MIN({arng('completion')})>=0,MAX({arng('completion')})<=1)",
+         "Base/Upside/Downside completion rate inputs."),
+        ("Modelled monthly load factor within 0%-100%",
+         f"AND(MIN({mrng('lf')})>=0,MAX({mrng('lf')})<=1)",
+         "After demand growth is applied (row is capped at 100%)."),
+        ("Modelled monthly completion rate within 0%-100%",
+         f"AND(MIN({mrng('comp')})>=0,MAX({mrng('comp')})<=1)", "Active case, every month."),
+        ("Capacity, flights per day and operating days are non-negative",
+         (f"AND({AS}!$C${A['capacity']}>=0,{AS}!$C${A['flights_per_day']}>=0,"
+          f"{AS}!$C${A['op_days']}>=0)"), "Route setup inputs."),
+        ("Scheduled and completed flights non-negative; completed <= scheduled",
+         (f"AND(MIN({mrng('sched')})>=0,MIN({mrng('completed')})>=0,"
+          f"SUMPRODUCT(({mrng('completed')}>{mrng('sched')})*1)=0)"), "Every month."),
+        ("Passengers flown <= available seats",
+         f"SUMPRODUCT(({mrng('pax')}>{mrng('seats')}+0.000001)*1)=0", "Every month."),
+        ("Cost inputs non-negative (all scenarios)",
+         f"MIN({AS}!$C${A['var_cost_flight']}:$E${A['fixed_monthly']})>=0",
+         "Variable cost per flight, per passenger and fixed costs."),
+        ("Modelled costs non-negative",
+         f"AND(MIN({mrng('flight_cost')})>=0,MIN({mrng('pax_cost')})>=0,MIN({mrng('fixed')})>=0)",
+         "Every month, after cost growth."),
+        ("Annual totals equal the sum of the months",
+         (f"AND(ABS({t('revenue')}-SUM({mrng('revenue')}))<{tol},"
+          f"ABS({t('tvc')}-SUM({mrng('tvc')}))<{tol},ABS({t('rop')}-SUM({mrng('rop')}))<{tol})"),
+         "Revenue, total variable costs, route operating profit."),
+        ("Revenue reconciles to passengers x weighted average fare",
+         f"ABS({t('revenue')}-{t('pax')}*{t('fare')})<{tol}", "Annual."),
+        ("Variable costs reconcile (flight + passenger = total)",
+         f"ABS({t('flight_cost')}+{t('pax_cost')}-{t('tvc')})<{tol}",
+         "No double counting of variable costs."),
+        ("Route P&L reconciles: revenue - variable - fixed = route operating profit",
+         f"ABS({t('revenue')}-{t('flight_cost')}-{t('pax_cost')}-{t('fixed')}-{t('rop')})<{tol}",
+         "Each cost counted exactly once."),
+        ("Contribution per flight x completed flights = contribution profit",
+         f"ABS({t('contrib_flt')}*{t('completed')}-{t('contrib')})<{tol}", "Annual."),
+        ("Cumulative route operating profit = annual total",
+         f"ABS({t('cum_rop')}-{t('rop')})<{tol}", "Month 12 cumulative vs. FY total."),
+        ("Scenario Comparison (active case) matches Financial Model - revenue",
+         f"ABS({sc_active.format(r=S['revenue'])}-{t('revenue')})<{tol}",
+         "Independent scenario engine reconciles to the main model."),
+        ("Scenario Comparison (active case) matches Financial Model - route operating profit",
+         f"ABS({sc_active.format(r=S['rop'])}-{t('rop')})<{tol}",
+         "Independent scenario engine reconciles to the main model."),
+        ("Scenario Comparison (active case) matches Financial Model - passengers",
+         f"ABS({sc_active.format(r=S['pax'])}-{t('pax')})<{tol}",
+         "Independent scenario engine reconciles to the main model."),
+    ]
+    first = row
+    for label, cond, desc in checks:
+        fm.cell(row=row, column=1, value=label).font = F_BODY
+        style(fm.cell(row=row, column=3, value=f'=IF({cond},"PASS","FAIL")'), font=F_BOLD,
+              align=A_CENTER)
+        style(fm.cell(row=row, column=4, value=desc), font=F_NOTE, align=A_LEFT)
+        row += 1
+    last = row - 1
+    n = len(checks)
+    rng = f"$C${first}:$C${last}"
+    fm.conditional_formatting.add(rng, CellIsRule(operator="equal", formula=['"PASS"'],
+                                                  fill=FILL_PASS))
+    fm.conditional_formatting.add(rng, CellIsRule(operator="equal", formula=['"FAIL"'],
+                                                  fill=FILL_FAIL))
+    R["check_first"], R["check_last"] = first, last
+    fm.cell(row=row, column=1, value="OVERALL MODEL STATUS").font = F_BOLD
+    master = (f'=IF(COUNTIF({rng},"PASS")={n},"ALL {n} CHECKS PASS",'
+              f'"REVIEW: "&({n}-COUNTIF({rng},"PASS"))&" CHECK(S) FAILING")')
+    fm.merge_cells(start_row=row, start_column=3, end_row=row, end_column=6)
+    style(fm.cell(row=row, column=3, value=master), font=F_BOLD, align=A_CENTER)
+    for c in range(1, 7):
+        fm.cell(row=row, column=c).border = B_TOTAL
+    fm.conditional_formatting.add(f"C{row}", FormulaRule(formula=[f'LEFT($C${row},3)="ALL"'],
+                                                         fill=FILL_PASS))
+    fm.conditional_formatting.add(f"C{row}", FormulaRule(formula=[f'LEFT($C${row},3)<>"ALL"'],
+                                                         fill=FILL_FAIL))
+    R["master"] = row
+    return row, n
+
+
+# --------------------------------------------------------------------------
+# Read Me tab
+# --------------------------------------------------------------------------
+def build_readme(wb, A, R):
+    ws = wb["Sheet"]
+    ws.title = "Read Me"
+    last_col = 4
+    title_block(ws, "Joby Aviation - Air Taxi Route Financial Model (Prototype)",
+                "Financial Systems Analyst case study  |  Single illustrative route  |  "
+                "12-month monthly model with annual totals", last_col)
+    ws.column_dimensions["A"].width = 30
+    ws.column_dimensions["B"].width = 110
+    ws.column_dimensions["C"].width = 3
+    ws.column_dimensions["D"].width = 3
+
+    row = 5
+    ws.cell(row=row, column=1, value="Model status").font = F_BOLD
+    style(ws.cell(row=row, column=2, value=f"={FM}!$C${R['master']}"), font=Font(
+        name=FONT_NAME, size=10, bold=True, color="008000"))
+    ws.conditional_formatting.add("B5", FormulaRule(formula=['LEFT($B$5,3)="ALL"'],
+                                                    fill=FILL_PASS))
+    ws.conditional_formatting.add("B5", FormulaRule(formula=['LEFT($B$5,3)<>"ALL"'],
+                                                    fill=FILL_FAIL))
+    row += 1
+    ws.cell(row=row, column=1, value="Active scenario").font = F_BOLD
+    style(ws.cell(row=row, column=2, value=f"={AS}!$C${A['scenario']}"), font=F_LINK)
+    row += 1
+    ws.cell(row=row, column=1, value="FY route operating profit").font = F_BOLD
+    style(ws.cell(row=row, column=2, value=f"={FM}!${TOTAL_COL}${R['rop']}"), font=F_LINK,
+          fmt=FMT_USD, align=A_LEFT)
+    row += 2
+
+    def block(title, items):
+        nonlocal row
+        section_row(ws, row, title, last_col)
+        row += 1
+        for k, v in items:
+            style(ws.cell(row=row, column=1, value=k), font=F_BOLD, align=A_WRAP)
+            style(ws.cell(row=row, column=2, value=v), font=F_BODY, align=A_WRAP)
+            lines = max(1, len(v) // 105 + 1)
+            ws.row_dimensions[row].height = 14 * lines + 2
+            row += 1
+        row += 1
+
+    block("Purpose", [
+        ("Objective", "Show how air taxi operating drivers (flights, completion, seats, load factor, "
+                      "fare, unit costs) flow through to route-level financial performance, support "
+                      "near-term decisions (pricing, scheduling, cost targets), and provide a "
+                      "structure that can scale into Joby's commercial reporting infrastructure."),
+        ("Important", "ILLUSTRATIVE PROTOTYPE. Every input is a hypothetical assumption for a case "
+                      "study. Nothing in this workbook is a Joby Aviation forecast, guidance or "
+                      "company-reported figure."),
+    ])
+    block("Workbook Map", [
+        ("1. Read Me", "Purpose, navigation, colour legend, methodology and extension roadmap."),
+        ("2. Assumptions", "All editable inputs with units and source/notes. Scenario selector "
+                           "(cell C5). Column F 'Active Case' feeds the model."),
+        ("3. Financial Model", "12-month route model for the active scenario: driver build, "
+                               "operating metrics, route P&L, breakeven analysis and integrity "
+                               "checks. FY totals in column O."),
+        ("4. Scenario Comparison", "Base / Upside / Downside computed side by side by an "
+                                   "independent engine (rows 50+), with variance vs. Base."),
+        ("Planned: Sensitivity Analysis", "Not yet built. Flex inputs via the inp_* defined names "
+                                          "(or the Assumptions column F cells) and read results "
+                                          "from the out_* defined names."),
+        ("Planned: Executive Dashboard", "Not yet built. KPI tiles and charts should reference "
+                                         "out_* names and the Scenario Comparison summary "
+                                         "(rows 6-40) rather than raw cell addresses."),
+    ])
+    block("Colour Legend", [
+        ("Blue text, yellow fill", "Editable input (hypothetical, illustrative)."),
+        ("Black text", "Formula - do not overwrite."),
+        ("Green text", "Link pulled from another tab."),
+        ("Navy / light-blue bands", "Headers and section titles."),
+        ("PASS / FAIL", "Integrity check results (green / red) at the bottom of Financial Model."),
+    ])
+    block("How To Use", [
+        ("Step 1", "On Assumptions, choose the active scenario in C5 (Base, Upside, Downside)."),
+        ("Step 2", "Edit blue input cells only. Data validation blocks out-of-range rates and "
+                   "negative costs."),
+        ("Step 3", "Review Financial Model (active case) and Scenario Comparison (all cases)."),
+        ("Step 4", "Confirm the model status above reads 'ALL ... CHECKS PASS'."),
+    ])
+    block("Methodology", [
+        ("Scheduled flights", "Operating days x scheduled flights per operating day."),
+        ("Completed flights", "Scheduled flights x flight completion rate (expected value)."),
+        ("Available seats", "Completed flights x aircraft passenger seats per flight."),
+        ("Passengers flown", "Available seats x passenger load factor (load factor = Month 1 input "
+                             "x demand growth index, capped at 100%)."),
+        ("Passenger revenue", "Passengers flown x average fare (Month 1 fare x fare growth index)."),
+        ("Direct flight costs", "Completed flights x variable operating cost per completed flight "
+                                "(x cost growth index). Cancelled flights incur no variable cost."),
+        ("Passenger-variable costs", "Passengers flown x variable cost per passenger (x cost growth "
+                                     "index)."),
+        ("Contribution profit", "Passenger revenue - direct flight costs - passenger-variable "
+                                "costs. Flight-level economics before any fixed cost."),
+        ("Route operating profit", "Contribution profit - route-specific fixed costs. This is a "
+                                   "route-level management measure, NOT EBITDA: corporate "
+                                   "overhead, R&D, certification and aircraft ownership costs are "
+                                   "excluded."),
+        ("Breakeven load factor", "(Direct flight costs [+ fixed route costs]) / (available seats x "
+                                  "(fare - variable cost per passenger)). Flight-level version "
+                                  "excludes fixed costs; route version includes them. Annual "
+                                  "figure uses annual totals, i.e. a uniform load factor across "
+                                  "the year."),
+        ("Annual rates", "Rates are weighted by their natural base (e.g. load factor = passengers / "
+                         "seats; fare = revenue / passengers), never simple averages of months."),
+        ("Recalculation", "Workbook is set to fully recalculate on open. No circular references, "
+                          "no hard-coded results, no external links."),
+    ])
+    block("Scaling Roadmap", [
+        ("Multiple routes", "Add a Route ID to the Assumptions table (one column block or one row "
+                            "set per route), replicate the Financial Model block per route, and "
+                            "consolidate with SUMIFS on Route ID."),
+        ("Aircraft types / markets", "Move capacity and unit costs to an aircraft-type lookup and "
+                                     "fares / demand to a market lookup; route rows reference them "
+                                     "via INDEX/MATCH."),
+        ("Systems integration", "Replace hypothetical inputs with feeds from scheduling, booking, "
+                                "maintenance and ERP systems; keep this calculation layer and the "
+                                "integrity checks as the reconciliation control."),
+    ])
+    ws.sheet_view.showGridLines = False
+    ws.freeze_panes = "A4"
+
+
+# --------------------------------------------------------------------------
+def build(out_path):
+    wb = Workbook()
+    _, A = build_assumptions(wb)
+    fm, R, row, last_col = build_financial_model(wb, A)
+    _, S, _ = build_scenarios(wb, A)
+    master_row, n_checks = build_checks(wb, fm, R, row, last_col, A, S)
+    build_readme(wb, A, R)
+
+    # Model status on the Assumptions tab
+    asn = wb[AS]
+    style(asn[f"C{A['status']}"], font=Font(name=FONT_NAME, size=10, bold=True, color="008000"))
+    asn[f"C{A['status']}"] = f"={FM}!$C${R['master']}"
+
+    # Financial Model sheet cosmetics
+    fm.column_dimensions["A"].width = 58
+    fm.column_dimensions["B"].width = 15
+    for c in MONTH_COLS:
+        fm.column_dimensions[c].width = 12
+    fm.column_dimensions[TOTAL_COL].width = 14
+    fm.column_dimensions[BASIS_COL].width = 40
+    fm.freeze_panes = "C9"
+    fm.sheet_view.showGridLines = False
+
+    # Defined names for future Sensitivity / Dashboard tabs
+    for key in ["completion", "fare", "load_factor", "var_cost_flight", "var_cost_pax",
+                "fixed_monthly", "fare_growth", "demand_growth", "cost_growth", "capacity",
+                "flights_per_day", "op_days"]:
+        add_name(wb, f"inp_{key}", f"{AS}!$F${A[key]}")
+    add_name(wb, "inp_scenario", f"{AS}!$C${A['scenario']}")
+    for key in ["completed", "pax", "revenue", "tvc", "contrib", "contrib_flt", "fixed", "rop",
+                "be_flight", "be_route", "lf", "fare"]:
+        add_name(wb, f"out_{key}", f"{FM}!${TOTAL_COL}${R[key]}")
+    add_name(wb, "out_model_status", f"{FM}!$C${R['master']}")
+
+    # Print setup
+    for ws in wb.worksheets:
+        ws.page_setup.orientation = "landscape"
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.sheet_properties.tabColor = NAVY if ws.title != "Read Me" else MID_BLUE
+
+    wb.calculation.fullCalcOnLoad = True
+    wb.calculation.calcMode = "auto"
+    wb.active = 0
+    wb.save(out_path)
+    return A, R, S, n_checks
+
+
+if __name__ == "__main__":
+    out = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).with_name(
+        "Joby_Financial_Model.xlsx")
+    A, R, S, n = build(out)
+    print(f"Wrote {out}  ({n} integrity checks)")
