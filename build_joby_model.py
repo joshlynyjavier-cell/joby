@@ -498,10 +498,10 @@ def build_financial_model(wb, A):
     line("contrib", "Contribution profit (flight-level)", "$",
          lambda c: f"={c}{R['revenue']}-{c}{R['tvc']}", FMT_USD, None, "Sum", bold=True)
     line("cm_pct", "Contribution margin", "% of revenue",
-         lambda c: f"=IF({c}{R['revenue']}=0,0,{c}{R['contrib']}/{c}{R['revenue']})", FMT_PCT,
+         lambda c: f"=IF({c}{R['revenue']}=0,\"n.m.\",{c}{R['contrib']}/{c}{R['revenue']})", FMT_PCT,
          None, "Weighted (annual contribution / revenue)")
     line("contrib_flt", "Contribution profit per completed flight", "$ / flight",
-         lambda c: f"=IF({c}{R['completed']}=0,0,{c}{R['contrib']}/{c}{R['completed']})",
+         lambda c: f"=IF({c}{R['completed']}=0,\"n.m.\",{c}{R['contrib']}/{c}{R['completed']})",
          FMT_USD2, None, "Weighted (annual contribution / flights)")
     line("fixed", "Fixed route costs", "$",
          lambda c: f"={act(A, 'fixed_monthly')}*{c}{R['cost_idx']}", FMT_USD, None, "Sum")
@@ -509,7 +509,7 @@ def build_financial_model(wb, A):
          lambda c: f"={c}{R['contrib']}-{c}{R['fixed']}", FMT_USD, None, "Sum", bold=True,
          border=B_TOTAL)
     line("rom", "Route operating margin", "% of revenue",
-         lambda c: f"=IF({c}{R['revenue']}=0,0,{c}{R['rop']}/{c}{R['revenue']})", FMT_PCT,
+         lambda c: f"=IF({c}{R['revenue']}=0,\"n.m.\",{c}{R['rop']}/{c}{R['revenue']})", FMT_PCT,
          None, "Weighted (annual route op. profit / revenue)")
     line("cum_rop", "Cumulative route operating profit / (loss)", "$",
          lambda c: (f"={c}{R['rop']}" if c == FIRST_M else
@@ -519,22 +519,22 @@ def build_financial_model(wb, A):
 
     for k in ("revenue", "flight_cost", "pax_cost", "tvc", "contrib", "fixed", "rop"):
         ws[tot(k)] = sum_total(k)
-    ws[tot("fare")] = f"=IF({tot('pax')}=0,0,{tot('revenue')}/{tot('pax')})"
-    ws[tot("cm_pct")] = f"=IF({tot('revenue')}=0,0,{tot('contrib')}/{tot('revenue')})"
-    ws[tot("contrib_flt")] = f"=IF({tot('completed')}=0,0,{tot('contrib')}/{tot('completed')})"
-    ws[tot("rom")] = f"=IF({tot('revenue')}=0,0,{tot('rop')}/{tot('revenue')})"
+    ws[tot("fare")] = f"=IF({tot('pax')}=0,\"n.m.\",{tot('revenue')}/{tot('pax')})"
+    ws[tot("cm_pct")] = f"=IF({tot('revenue')}=0,\"n.m.\",{tot('contrib')}/{tot('revenue')})"
+    ws[tot("contrib_flt")] = f"=IF({tot('completed')}=0,\"n.m.\",{tot('contrib')}/{tot('completed')})"
+    ws[tot("rom")] = f"=IF({tot('revenue')}=0,\"n.m.\",{tot('rop')}/{tot('revenue')})"
     ws[tot("cum_rop")] = f"={LAST_M}{R['cum_rop']}"
 
     # Weighted annual rates for the driver rows
-    ws[tot("comp")] = f"=IF({tot('sched')}=0,0,{tot('completed')}/{tot('sched')})"
+    ws[tot("comp")] = f"=IF({tot('sched')}=0,\"n.m.\",{tot('completed')}/{tot('sched')})"
     ws[f"{BASIS_COL}{R['comp']}"] = "Weighted (completed / scheduled)"
-    ws[tot("lf")] = f"=IF({tot('seats')}=0,0,{tot('pax')}/{tot('seats')})"
+    ws[tot("lf")] = f"=IF({tot('seats')}=0,\"n.m.\",{tot('pax')}/{tot('seats')})"
     ws[f"{BASIS_COL}{R['lf']}"] = "Weighted (passengers / seats)"
-    ws[tot("vcf")] = f"=IF({tot('completed')}=0,0,{tot('flight_cost')}/{tot('completed')})"
+    ws[tot("vcf")] = f"=IF({tot('completed')}=0,\"n.m.\",{tot('flight_cost')}/{tot('completed')})"
     ws[f"{BASIS_COL}{R['vcf']}"] = "Weighted (flight costs / flights)"
-    ws[tot("vcp")] = f"=IF({tot('pax')}=0,0,{tot('pax_cost')}/{tot('pax')})"
+    ws[tot("vcp")] = f"=IF({tot('pax')}=0,\"n.m.\",{tot('pax_cost')}/{tot('pax')})"
     ws[f"{BASIS_COL}{R['vcp']}"] = "Weighted (pax costs / passengers)"
-    ws[tot("fpd")] = f"=IF({tot('op_days')}=0,0,{tot('sched')}/{tot('op_days')})"
+    ws[tot("fpd")] = f"=IF({tot('op_days')}=0,\"n.m.\",{tot('sched')}/{tot('op_days')})"
     ws[f"{BASIS_COL}{R['fpd']}"] = "Weighted (flights / days)"
     for k, fmt in (("comp", FMT_PCT), ("lf", FMT_PCT), ("vcf", FMT_USD2), ("vcp", FMT_USD2),
                    ("fpd", FMT_NUM1)):
@@ -545,7 +545,7 @@ def build_financial_model(wb, A):
     line("net_pax_margin", "Net margin per passenger (fare - variable cost per passenger)",
          "$ / passenger", lambda c: f"={c}{R['fare']}-{c}{R['vcp']}", FMT_USD2, None,
          "Weighted ((revenue - pax costs) / passengers)")
-    ws[tot("net_pax_margin")] = (f"=IF({tot('pax')}=0,0,({tot('revenue')}-{tot('pax_cost')})"
+    ws[tot("net_pax_margin")] = (f"=IF({tot('pax')}=0,\"n.m.\",({tot('revenue')}-{tot('pax_cost')})"
                                  f"/{tot('pax')})")
     line("max_margin", "Passenger margin if every seat were sold (100% load factor)", "$",
          lambda c: f"={c}{R['seats']}*{c}{R['net_pax_margin']}", FMT_USD, None, "Sum")
@@ -736,10 +736,10 @@ def build_scenarios(wb, A):
          lambda s: f"={tref(s, 'completed')}", ""),
         ("pax", "Passengers flown", "passengers", FMT_NUM, lambda s: f"={tref(s, 'pax')}", ""),
         ("lf", "Average load factor (weighted)", "% of seats", FMT_PCT,
-         lambda s: f"=IF({tref(s, 'seats')}=0,0,{tref(s, 'pax')}/{tref(s, 'seats')})",
+         lambda s: f"=IF({tref(s, 'seats')}=0,\"n.m.\",{tref(s, 'pax')}/{tref(s, 'seats')})",
          "Passengers / available seats"),
         ("fare", "Average fare (weighted)", "$ / passenger", FMT_USD2,
-         lambda s: f"=IF({tref(s, 'pax')}=0,0,{tref(s, 'revenue')}/{tref(s, 'pax')})",
+         lambda s: f"=IF({tref(s, 'pax')}=0,\"n.m.\",{tref(s, 'revenue')}/{tref(s, 'pax')})",
          "Revenue / passengers"),
         ("revenue", "Annual passenger revenue", "$", FMT_USD,
          lambda s: f"={tref(s, 'revenue')}", ""),
@@ -748,15 +748,15 @@ def build_scenarios(wb, A):
         ("contrib", "Contribution profit", "$", FMT_USD, lambda s: f"={tref(s, 'contrib')}",
          "Flight-level, before fixed route costs"),
         ("cm_pct", "Contribution margin", "% of revenue", FMT_PCT,
-         lambda s: f"=IF({tref(s, 'revenue')}=0,0,{tref(s, 'contrib')}/{tref(s, 'revenue')})", ""),
+         lambda s: f"=IF({tref(s, 'revenue')}=0,\"n.m.\",{tref(s, 'contrib')}/{tref(s, 'revenue')})", ""),
         ("contrib_flt", "Contribution profit per completed flight", "$ / flight", FMT_USD2,
-         lambda s: f"=IF({tref(s, 'completed')}=0,0,{tref(s, 'contrib')}/{tref(s, 'completed')})",
+         lambda s: f"=IF({tref(s, 'completed')}=0,\"n.m.\",{tref(s, 'contrib')}/{tref(s, 'completed')})",
          ""),
         ("fixed", "Fixed route costs", "$", FMT_USD, lambda s: f"={tref(s, 'fixed')}", ""),
         ("rop", "Route operating profit / (loss)", "$", FMT_USD,
          lambda s: f"={tref(s, 'rop')}", "After route fixed costs; not EBITDA"),
         ("rom", "Route operating margin", "% of revenue", FMT_PCT,
-         lambda s: f"=IF({tref(s, 'revenue')}=0,0,{tref(s, 'rop')}/{tref(s, 'revenue')})", ""),
+         lambda s: f"=IF({tref(s, 'revenue')}=0,\"n.m.\",{tref(s, 'rop')}/{tref(s, 'revenue')})", ""),
         ("be_flight", "Breakeven load factor - flight level", "% of seats", FMT_PCT,
          lambda s: (f'=IF({tref(s, "max_margin")}>0,{tref(s, "flight_cost")}/'
                     f'{tref(s, "max_margin")},"n.m.")'),
@@ -877,8 +877,9 @@ def build_checks(wb, fm, R, row, last_col, A, S):
          (f"AND(ABS({t('revenue')}-SUM({mrng('revenue')}))<{tol},"
           f"ABS({t('tvc')}-SUM({mrng('tvc')}))<{tol},ABS({t('rop')}-SUM({mrng('rop')}))<{tol})"),
          "Revenue, total variable costs, route operating profit."),
-        ("Revenue reconciles to passengers x weighted average fare",
-         f"ABS({t('revenue')}-{t('pax')}*{t('fare')})<{tol}", "Annual."),
+        ("Revenue reconciles to passengers x average fare, month by month",
+         f"ABS({t('revenue')}-SUMPRODUCT({mrng('pax')},{mrng('fare')}))<{tol}",
+         "Annual revenue = sum of (monthly passengers x monthly fare)."),
         ("Variable costs reconcile (flight + passenger = total)",
          f"ABS({t('flight_cost')}+{t('pax_cost')}-{t('tvc')})<{tol}",
          "No double counting of variable costs."),
@@ -886,7 +887,8 @@ def build_checks(wb, fm, R, row, last_col, A, S):
          f"ABS({t('revenue')}-{t('flight_cost')}-{t('pax_cost')}-{t('fixed')}-{t('rop')})<{tol}",
          "Each cost counted exactly once."),
         ("Contribution per flight x completed flights = contribution profit",
-         f"ABS({t('contrib_flt')}*{t('completed')}-{t('contrib')})<{tol}", "Annual."),
+         (f"IF(ISNUMBER({t('contrib_flt')}),ABS({t('contrib_flt')}*{t('completed')}-{t('contrib')})"
+          f"<{tol},ABS({t('contrib')})<{tol})"), "Annual (zero flights must mean zero contribution)."),
         ("Cumulative route operating profit = annual total",
          f"ABS({t('cum_rop')}-{t('rop')})<{tol}", "Month 12 cumulative vs. FY total."),
         ("Scenario Comparison (active case) matches Financial Model - revenue",
@@ -926,6 +928,21 @@ def build_checks(wb, fm, R, row, last_col, A, S):
     fm.conditional_formatting.add(f"C{row}", FormulaRule(formula=[f'LEFT($C${row},3)<>"ALL"'],
                                                          fill=FILL_FAIL))
     R["master"] = row
+
+    # Informational flag (not a pass/fail check): demand growth truncated by seat capacity
+    row += 2
+    fm.cell(row=row, column=1,
+            value="Months where demand exceeds seat capacity (load factor capped at 100%)").font = F_BODY
+    style(fm.cell(row=row, column=3,
+                  value=(f"=SUMPRODUCT(({act(A, 'load_factor')}*{mrng('dem_idx')}>1)*1)")),
+          font=F_BOLD, fmt=FMT_INT, align=A_CENTER)
+    style(fm.cell(row=row, column=4, value=("Information only. Above zero means the demand growth "
+                                            "assumption implies more passengers than seats; the "
+                                            "excess is not flown or counted as revenue.")),
+          font=F_NOTE, align=A_LEFT)
+    fm.conditional_formatting.add(f"C{row}", CellIsRule(operator="greaterThan", formula=["0"],
+                                                        fill=PatternFill("solid", fgColor="FFEB9C")))
+    R["capped"] = row
     return row, n
 
 
@@ -1035,7 +1052,11 @@ def build_readme(wb, A, R):
                                   "figure uses annual totals, i.e. a uniform load factor across "
                                   "the year."),
         ("Annual rates", "Rates are weighted by their natural base (e.g. load factor = passengers / "
-                         "seats; fare = revenue / passengers), never simple averages of months."),
+                         "seats; fare = revenue / passengers), never simple averages of months. "
+                         "Any ratio with a zero denominator (e.g. margin with no revenue, cost "
+                         "per flight with no flights) shows 'n.m.' (not meaningful) rather than 0."),
+        ("Capacity cap", "Load factor is capped at 100%. The Financial Model shows how many "
+                         "months demand growth exceeds seat capacity (information only)."),
         ("Recalculation", "Workbook is set to fully recalculate on open. No circular references, "
                           "no hard-coded results, no external links."),
     ])
