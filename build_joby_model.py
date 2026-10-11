@@ -1145,9 +1145,355 @@ def build_sensitivity(wb, A, E):
 
 
 # --------------------------------------------------------------------------
+# Executive Dashboard tab (one 16:9 screen; every value links to FM / SC)
+# --------------------------------------------------------------------------
+DB = "'Executive Dashboard'"
+DB_COLS = [get_column_letter(c) for c in range(2, 14)]  # B..M (12 columns)
+F_KPI_LABEL = Font(name=FONT_NAME, size=8, bold=True, color=MID_BLUE)
+F_KPI_VALUE = Font(name=FONT_NAME, size=20, bold=True, color=NAVY)
+F_KPI_SUB = Font(name=FONT_NAME, size=8, color=GREY)
+F_KPI_DELTA = Font(name=FONT_NAME, size=8, bold=True, color=NAVY)
+FMT_MUSD = '$#,##0.00,,"M";($#,##0.00,,"M");"-"'
+
+
+def build_dashboard(wb, A, R, S):
+    from openpyxl.chart import BarChart, LineChart, Reference
+    from openpyxl.chart.shapes import GraphicalProperties
+    from openpyxl.drawing.line import LineProperties
+
+    ws = wb.create_sheet("Executive Dashboard", 1)
+    D = {}
+    fmr = lambda k: f"{FM}!${TOTAL_COL}${R[k]}"  # noqa: E731  FY total in Financial Model
+    scr = lambda k, col: f"{SC}!${col}${S[k]}"  # noqa: E731  Scenario Comparison summary
+    scenario = f"{AS}!$C${A['scenario']}"
+    sc_active = lambda k: f"INDEX({SC}!$C${S[k]}:$E${S[k]},{AS}!$C${A['scenario_idx']})"  # noqa
+
+    ws.column_dimensions["A"].width = 2
+    for c in DB_COLS:
+        ws.column_dimensions[c].width = 11.5
+    ws.column_dimensions["N"].width = 2
+    first, last = DB_COLS[0], DB_COLS[-1]
+
+    def band(row, fill, height=None):
+        for c in ["A"] + DB_COLS + ["N"]:
+            ws[f"{c}{row}"].fill = fill
+        if height:
+            ws.row_dimensions[row].height = height
+
+    def merged(rng, value, font, fill=None, align=A_LEFT, fmt=None, border=None):
+        ws.merge_cells(rng)
+        tl = rng.split(":")[0]
+        c = ws[tl]
+        c.value = value
+        style(c, font=font, fill=fill, align=align, fmt=fmt)
+        if fill or border:
+            for row in ws[rng]:
+                for cell in row:
+                    if fill:
+                        cell.fill = fill
+                    if border:
+                        cell.border = border
+        return c
+
+    # ---- Banner -----------------------------------------------------------
+    band(1, FILL_NAVY, 30)
+    band(2, FILL_NAVY, 18)
+    merged(f"B1:{last}1", "Air Taxi Route Economics  |  Executive Dashboard",
+           Font(name=FONT_NAME, size=18, bold=True, color=WHITE), align=A_LEFT)
+    merged(f"B2:{last}2",
+           (f'="Joby Aviation case study   |   "&{act(A, "route_name")}&"   |   "&'
+            f'{act(A, "service_type")}&"   |   12 months "&TEXT({FM}!$C${R["period"]},"mmm yyyy")'
+            f'&" - "&TEXT({FM}!${LAST_M}${R["period"]},"mmm yyyy")&"   |   Scenario shown: "'
+            f'&{scenario}'),
+           Font(name=FONT_NAME, size=10, color="D9E2F3"), align=A_LEFT)
+    ws.row_dimensions[3].height = 16
+    merged(f"B3:{last}3", "ILLUSTRATIVE DATA ONLY - hypothetical case-study assumptions; not a "
+                          "Joby Aviation forecast, guidance or company-reported figure.",
+           Font(name=FONT_NAME, size=8, bold=True, italic=True, color="C00000"), align=A_LEFT)
+    ws.row_dimensions[4].height = 6
+
+    # ---- KPI cards (rows 5-8) ----------------------------------------------
+    is_base = f'{scenario}="Base"'
+
+    def pct_delta(k):
+        return (f'=IF({is_base},"Base case shown",IFERROR("vs Base: "&TEXT({fmr(k)}/'
+                f'{scr(k, "C")}-1,"+0.0%;-0.0%;0.0%"),"vs Base: n.m."))')
+
+    cards = [
+        ("PASSENGER REVENUE", f"={fmr('revenue')}", FMT_MUSD,
+         '="USD, 12-month total"', pct_delta("revenue"), "revenue"),
+        ("PASSENGERS FLOWN", f"={fmr('pax')}", FMT_NUM,
+         '="passengers, 12-month total"', pct_delta("pax"), "pax"),
+        ("COMPLETED FLIGHTS", f"={fmr('completed')}", FMT_NUM,
+         f'="flights  |  "&TEXT({fmr("comp")},"0.0%")&" completion"',
+         pct_delta("completed"), "completed"),
+        ("LOAD FACTOR", f"={fmr('lf')}", FMT_PCT,
+         '="weighted: passengers / seats"',
+         (f'=IF({is_base},"Base case shown",IFERROR("vs Base: "&TEXT(({fmr("lf")}-'
+          f'{scr("lf", "C")})*100,"+0.0;-0.0;0.0")&" pts","vs Base: n.m."))'), "lf"),
+        ("CONTRIBUTION / FLIGHT", f"={fmr('contrib_flt')}", FMT_USD2,
+         '="USD / completed flight, pre-fixed costs"',
+         (f'=IF({is_base},"Base case shown",IFERROR("vs Base: "&TEXT({fmr("contrib_flt")}-'
+          f'{scr("contrib_flt", "C")},"+$#,##0.00;-$#,##0.00;$0.00"),"vs Base: n.m."))'),
+         "contrib_flt"),
+        ("ROUTE OPERATING PROFIT", f"={fmr('rop')}", FMT_MUSD,
+         f'="after fixed costs  |  "&IFERROR(TEXT({fmr("rom")},"0.0%"),"n.m.")'
+         f'&" margin"',
+         (f'=IF({is_base},"Base case shown","vs Base: "&TEXT(({fmr("rop")}-{scr("rop", "C")})'
+          f'/1000000,"+$0.00;-$0.00;$0.00")&"M")'), "rop"),
+    ]
+    card_border = Border(left=Side(style="thin", color="BDD7EE"),
+                         right=Side(style="thin", color="BDD7EE"),
+                         top=Side(style="medium", color=MID_BLUE),
+                         bottom=Side(style="thin", color="BDD7EE"))
+    for r, h in ((5, 16), (6, 30), (7, 13), (8, 14)):
+        ws.row_dimensions[r].height = h
+    D["kpi"] = {}
+    for i, (label, value, fmt, sub, delta, key) in enumerate(cards):
+        c1, c2 = DB_COLS[2 * i], DB_COLS[2 * i + 1]
+        for r in range(5, 9):
+            for c in (c1, c2):
+                ws[f"{c}{r}"].fill = FILL_PALE
+        merged(f"{c1}5:{c2}5", label, F_KPI_LABEL, align=Alignment(horizontal="left",
+                                                                    vertical="bottom", indent=1))
+        merged(f"{c1}6:{c2}6", value, F_KPI_VALUE, fmt=fmt,
+               align=Alignment(horizontal="left", vertical="center", indent=1))
+        merged(f"{c1}7:{c2}7", sub, F_KPI_SUB, align=Alignment(horizontal="left",
+                                                               vertical="center", indent=1))
+        merged(f"{c1}8:{c2}8", delta, F_KPI_DELTA, align=Alignment(horizontal="left",
+                                                                   vertical="top", indent=1))
+        for r in range(5, 9):
+            for c in (c1, c2):
+                b = ws[f"{c}{r}"].border
+                ws[f"{c}{r}"].border = Border(
+                    left=card_border.left if c == c1 else b.left,
+                    right=card_border.right if c == c2 else b.right,
+                    top=card_border.top if r == 5 else b.top,
+                    bottom=card_border.bottom if r == 8 else b.bottom)
+        D["kpi"][key] = f"{c1}6"
+        ws.conditional_formatting.add(f"{c1}6", CellIsRule(operator="lessThan", formula=["0"],
+                                                           font=Font(color="C00000")))
+    ws.row_dimensions[9].height = 8
+
+    # ---- Section headers (row 10) -----------------------------------------------
+    sec_font = Font(name=FONT_NAME, size=10, bold=True, color=NAVY)
+    sec_border = Border(bottom=Side(style="medium", color=NAVY))
+    ws.row_dimensions[10].height = 18
+    merged("B10:H10", "Monthly Passenger Revenue and Route Operating Profit (USD)", sec_font,
+           border=sec_border)
+    merged(f"I10:{last}10", "Scenario Comparison - 12-Month Totals", sec_font, border=sec_border)
+
+    # ---- Trend chart (links directly to Financial Model rows) --------------------
+    fm_ws = wb["Financial Model"]
+    cats = Reference(fm_ws, min_col=FIRST_MONTH_COL, max_col=FIRST_MONTH_COL + MONTHS - 1,
+                     min_row=R["period"])
+    bar = BarChart()
+    bar.type = "col"
+    bar.add_data(Reference(fm_ws, min_col=2, max_col=FIRST_MONTH_COL + MONTHS - 1,
+                           min_row=R["revenue"]), from_rows=True, titles_from_data=False)
+    bar.series[0].tx = None
+    from openpyxl.chart.series import SeriesLabel
+    bar.series[0].tx = SeriesLabel(v="Passenger revenue")
+    bar.series[0].graphicalProperties = GraphicalProperties(solidFill="9DC3E6")
+    bar.series[0].graphicalProperties.line.noFill = True
+    bar.gapWidth = 60
+    line = LineChart()
+    line.add_data(Reference(fm_ws, min_col=FIRST_MONTH_COL, max_col=FIRST_MONTH_COL + MONTHS - 1,
+                            min_row=R["rop"]), from_rows=True, titles_from_data=False)
+    line.series[0].tx = SeriesLabel(v="Route operating profit / (loss)")
+    line.series[0].graphicalProperties = GraphicalProperties(
+        ln=LineProperties(solidFill=NAVY, w=28575))
+    line.series[0].marker.symbol = "circle"
+    line.series[0].marker.size = 5
+    line.series[0].marker.graphicalProperties = GraphicalProperties(solidFill=NAVY)
+    line.series[0].smooth = False
+    # bar's first data point is column B (unit) - restrict to C..N instead
+    bar.series[0].val.numRef.f = (f"{FM}!${FIRST_M}${R['revenue']}:${LAST_M}${R['revenue']}")
+    bar.set_categories(cats)
+    line.set_categories(cats)
+    bar.y_axis.numFmt = '$#,##0,"K"'
+    bar.y_axis.majorGridlines.spPr = GraphicalProperties(ln=LineProperties(solidFill="E7EEF7"))
+    bar.x_axis.number_format = "mmm-yy"
+    bar.x_axis.delete = False
+    bar.x_axis.tickLblPos = "low"  # keep month labels below negative bars/points
+    bar.y_axis.delete = False
+    bar.y_axis.title = None
+    bar.legend.position = "b"
+    bar.height = 6.3
+    bar.width = 14.6
+    bar += line
+    ws.add_chart(bar, "B11")
+    D["chart_rows"] = (R["revenue"], R["rop"], R["period"])
+
+    # ---- Scenario table (links to Scenario Comparison summary) ------------------
+    hdr = 11
+    ws.row_dimensions[hdr].height = 16
+    merged(f"I{hdr}:J{hdr}", "USD unless noted", Font(name=FONT_NAME, size=8, italic=True,
+                                                       color=WHITE), fill=FILL_MID)
+    for col, name in zip("KLM", ("Base", "Upside", "Downside")):
+        style(ws[f"{col}{hdr}"], font=Font(name=FONT_NAME, size=9, bold=True, color=WHITE),
+              fill=FILL_MID, align=A_CENTER)
+        ws[f"{col}{hdr}"] = name
+    table = [
+        ("Passenger revenue", "revenue", FMT_MUSD),
+        ("Passengers flown", "pax", FMT_NUM),
+        ("Load factor (weighted)", "lf", FMT_PCT),
+        ("Average fare ($ / passenger)", "fare", FMT_USD2),
+        ("Contribution per flight", "contrib_flt", FMT_USD2),
+        ("Contribution profit", "contrib", FMT_MUSD),
+        ("Route operating profit", "rop", FMT_MUSD),
+        ("Route operating margin", "rom", FMT_PCT),
+        ("Route breakeven load factor", "be_route", FMT_PCT),
+        ("Profitable months (of 12)", "profit_months", FMT_INT),
+    ]
+    D["table"] = {}
+    t_font = Font(name=FONT_NAME, size=9, color="000000")
+    for i, (label, key, fmt) in enumerate(table):
+        r = hdr + 1 + i
+        ws.row_dimensions[r].height = 16
+        fill = FILL_PALE if i % 2 == 0 else PatternFill("solid", fgColor=WHITE)
+        bold = key in ("rop", "contrib_flt")
+        merged(f"I{r}:J{r}", label, Font(name=FONT_NAME, size=9, bold=bold, color=NAVY), fill=fill)
+        for col, sc in zip("KLM", "CDE"):
+            style(ws[f"{col}{r}"], font=Font(name=FONT_NAME, size=9, bold=bold, color=NAVY),
+                  fmt=fmt, align=A_RIGHT, fill=fill)
+            ws[f"{col}{r}"] = f"={scr(key, sc)}"
+        D["table"][key] = r
+    t_last = hdr + len(table)
+    for r in range(hdr + 1, t_last + 1):
+        ws[f"{last}{r}"].border = Border(right=Side(style="thin", color="BDD7EE"))
+    ws.conditional_formatting.add(f"K{hdr + 1}:M{t_last}", CellIsRule(
+        operator="lessThan", formula=["0"], font=Font(color="C00000")))
+    # highlight the scenario currently driving the KPI cards
+    ws.conditional_formatting.add(f"K{hdr}:M{hdr}", FormulaRule(
+        formula=[f"K${hdr}={scenario}"], fill=PatternFill("solid", fgColor=NAVY),
+        font=Font(color=WHITE, bold=True, underline="single")))
+    r = t_last + 1
+    ws.row_dimensions[r].height = 14
+    merged(f"I{r}:{last}{r}",
+           f'="Navy header = scenario in KPI cards ("&{scenario}&"). Breakeven LF includes '
+           f'fixed route costs."', Font(name=FONT_NAME, size=7, italic=True,
+                                                     color=GREY))
+    # pad rows so the chart area (rows 11-23) has an even height
+    for rr in range(r + 1, 24):
+        ws.row_dimensions[rr].height = 16
+    ws.row_dimensions[24].height = 8
+
+    # ---- Key decisions (rows 25-28) ----------------------------------------------------
+    ws.row_dimensions[25].height = 18
+    merged(f"B25:{last}25", "Key Decisions for Finance & Operations Leadership "
+                            "(scenario shown in KPI cards)", sec_font, border=sec_border)
+    fare, lf, be = fmr("fare"), fmr("lf"), fmr("be_route")
+    sched, comp, cpf = fmr("sched"), fmr("completed"), fmr("contrib_flt")
+    rop_rng = f"{FM}!${FIRST_M}${R['rop']}:${LAST_M}${R['rop']}"
+    per_rng = f"{FM}!${FIRST_M}${R['period']}:${LAST_M}${R['period']}"
+    decisions = [
+        ("PRICING", "Protect the fare; avoid broad discounting until demand is proven.",
+         (f'=IFERROR("At a "&TEXT({fare},"$0")&" average fare the route needs a "&TEXT({be},'
+          f'"0.0%")&" load factor to cover fixed route costs vs "&TEXT({lf},"0.0%")&" achieved ("'
+          f'&TEXT(({lf}-{be})*100,"+0.0;-0.0")&" pts). In the Downside case ("&TEXT('
+          f'{scr("fare", "E")},"$0")&" fare, weaker demand) breakeven rises to "&TEXT('
+          f'{scr("be_route", "E")},"0.0%")&".","Breakeven load factor is not meaningful in this '
+          f'scenario (no passengers flown, or the fare does not exceed variable cost per '
+          f'passenger). Revisit fare and demand inputs before setting prices.")')),
+        ("CAPACITY", "Prioritise completion rate before adding scheduled frequency.",
+         (f'=IFERROR("Completion of "&TEXT({fmr("comp")},"0.0%")&" leaves "&TEXT({sched}-{comp},'
+          f'"#,##0")&" of "&TEXT({sched},"#,##0")&" scheduled flights unflown. Each +1 pt of '
+          f'completion adds ~"&TEXT({sched}*0.01,"#,##0")&" flights and ~"&TEXT({sched}*0.01*'
+          f'{cpf},"$#,##0")&" of annual contribution at "&TEXT({cpf},"$0")&" per flight.",'
+          f'"No completed flights in this scenario, so capacity and completion economics are '
+          f'not meaningful. Check scheduled flights and completion rate inputs.")')),
+        ("ROUTE PROFITABILITY", "Manage the route monthly against its breakeven load factor.",
+         (f'=IFERROR("Route operating profit of "&TEXT({fmr("rop")}/1000000,"$0.00;-$0.00")&"M ("'
+          f'&TEXT({fmr("rom")},"0.0%")&" margin); "&COUNTIF({rop_rng},">0")&" of 12 months '
+          f'profitable"&IFERROR(", first in "&TEXT(INDEX({per_rng},MATCH(1,INDEX(({rop_rng}>0)*1,'
+          f'0),0)),"mmm yyyy"),"")&". Fixed route costs need "&TEXT({fmr("fixed")}/{comp},"$0")'
+          f'&" of contribution per completed flight.","No completed flights: the route carries "'
+          f'&TEXT({fmr("fixed")}/1000000,"$0.00")&"M of fixed route costs with no contribution '
+          f'to cover them (route operating profit "&TEXT({fmr("rop")}/1000000,"$0.00;-$0.00")'
+          f'&"M).")')),
+    ]
+    box_cols = [("B", "E"), ("F", "I"), ("J", last)]
+    for r, h in ((26, 17), (27, 26), (28, 50)):
+        ws.row_dimensions[r].height = h
+    D["decisions"] = []
+    box_border_l = Side(style="medium", color=MID_BLUE)
+    for (c1, c2), (title, decision, evidence) in zip(box_cols, decisions):
+        merged(f"{c1}26:{c2}26", title, Font(name=FONT_NAME, size=9, bold=True, color=WHITE),
+               fill=FILL_NAVY, align=Alignment(horizontal="left", vertical="center", indent=1))
+        merged(f"{c1}27:{c2}27", decision, Font(name=FONT_NAME, size=9, bold=True, color=NAVY),
+               fill=FILL_LIGHT, align=Alignment(horizontal="left", vertical="center",
+                                                wrap_text=True, indent=1))
+        merged(f"{c1}28:{c2}28", evidence, Font(name=FONT_NAME, size=8, color="000000"),
+               fill=FILL_PALE, align=Alignment(horizontal="left", vertical="top",
+                                               wrap_text=True, indent=1))
+        D["decisions"].append(f"{c1}28")
+    ws.row_dimensions[29].height = 6
+
+    # ---- Footer -----------------------------------------------------------------
+    band(30, FILL_NAVY, 16)
+    D["footer"] = f"B30"
+    merged(f"B30:{last}30", None, Font(name=FONT_NAME, size=8, color="D9E2F3"))
+    D["print_area"] = f"A1:N30"
+
+    # ---- Reconciliation checks (below the screenshot / print area) ---------------
+    r = 33
+    section_row(ws, r, "Dashboard Reconciliation Checks (outside print area)", 13)
+    r += 1
+    tol = "0.000001"
+    eq = lambda a, b: f"IF(AND(ISNUMBER({a}),ISNUMBER({b})),ABS({a}-{b})<{tol},{a}={b})"  # noqa
+    kpi_src = {"revenue": "revenue", "pax": "pax", "completed": "completed", "lf": "lf",
+               "contrib_flt": "contrib_flt", "rop": "rop"}
+    checks = []
+    for key, src in kpi_src.items():
+        cell = D["kpi"][key]
+        checks.append((f"KPI card {key} = Financial Model FY total", eq(cell, fmr(src))))
+    checks.append(("KPI cards = Scenario Comparison active-scenario column (revenue, profit, LF)",
+                   "AND(" + ",".join(eq(D["kpi"][k], sc_active(k))
+                                     for k in ("revenue", "rop", "lf", "pax")) + ")"))
+    checks.append(("Scenario table = Scenario Comparison summary (all cells)",
+                   "AND(" + ",".join(eq(f"{col}{D['table'][k]}", scr(k, sc))
+                                     for k in D["table"] for col, sc in zip("KLM", "CDE")) + ")"))
+    checks.append(("Trend chart revenue months sum to KPI revenue",
+                   eq(f"SUM({FM}!${FIRST_M}${R['revenue']}:${LAST_M}${R['revenue']})",
+                      D["kpi"]["revenue"])))
+    checks.append(("Trend chart profit months sum to KPI route operating profit",
+                   eq(f"SUM({rop_rng})", D["kpi"]["rop"])))
+    checks.append(("Key decisions text has no errors",
+                   "AND(" + ",".join(f"NOT(ISERROR({c}))" for c in D["decisions"]) + ")"))
+    first_chk = r
+    for label, cond in checks:
+        style(ws.cell(row=r, column=2, value=label), font=F_BODY)
+        style(ws.cell(row=r, column=10, value=f'=IF({cond},"PASS","FAIL")'), font=F_BOLD,
+              align=A_CENTER)
+        r += 1
+    rng = f"$J${first_chk}:$J${r - 1}"
+    ws.conditional_formatting.add(rng, CellIsRule(operator="equal", formula=['"PASS"'],
+                                                  fill=FILL_PASS))
+    ws.conditional_formatting.add(rng, CellIsRule(operator="equal", formula=['"FAIL"'],
+                                                  fill=FILL_FAIL))
+    style(ws.cell(row=r, column=2, value="DASHBOARD STATUS"), font=F_BOLD)
+    n = len(checks)
+    style(ws.cell(row=r, column=10, value=(f'=IF(COUNTIF({rng},"PASS")={n},"ALL {n} DASHBOARD '
+                                           f'CHECKS PASS","REVIEW: "&({n}-COUNTIF({rng},"PASS"))'
+                                           f'&" FAILING")')), font=F_BOLD)
+    D["status"] = r
+
+    ws.sheet_view.showGridLines = False
+    ws.sheet_view.zoomScale = 100
+    ws.print_area = D["print_area"]
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.print_options.horizontalCentered = True
+    ws.page_margins.left = ws.page_margins.right = 0.3
+    ws.page_margins.top = ws.page_margins.bottom = 0.3
+    return ws, D
+
+
+# --------------------------------------------------------------------------
 # Checks (bottom of the Financial Model tab)
 # --------------------------------------------------------------------------
-def build_checks(wb, fm, R, row, last_col, A, S, X):
+def build_checks(wb, fm, R, row, last_col, A, S, X, D):
     row += 1
     section_row(fm, row, "E. Model Integrity Checks", last_col)
     row += 1
@@ -1226,6 +1572,9 @@ def build_checks(wb, fm, R, row, last_col, A, S, X):
         ("Sensitivity Analysis checks pass",
          f'LEFT({SA}!$B${X["status"]},3)="ALL"',
          "Status of the validation block on the Sensitivity Analysis tab."),
+        ("Executive Dashboard reconciles to source tabs",
+         f'LEFT({DB}!$J${D["status"]},3)="ALL"',
+         "Status of the reconciliation block below the Executive Dashboard."),
     ]
     first = row
     for label, cond, desc in checks:
@@ -1327,21 +1676,24 @@ def build_readme(wb, A, R):
     ])
     block("Workbook Map", [
         ("1. Read Me", "Purpose, navigation, colour legend, methodology and extension roadmap."),
-        ("2. Assumptions", "All editable inputs with units and source/notes. Scenario selector "
+        ("3. Assumptions", "All editable inputs with units and source/notes. Scenario selector "
                            "(cell C5). Column F 'Active Case' feeds the model."),
-        ("3. Financial Model", "12-month route model for the active scenario: driver build, "
+        ("4. Financial Model", "12-month route model for the active scenario: driver build, "
                                "operating metrics, route P&L, breakeven analysis and integrity "
                                "checks. FY totals in column O."),
-        ("4. Scenario Comparison", "Base / Upside / Downside computed side by side by an "
+        ("5. Scenario Comparison", "Base / Upside / Downside computed side by side by an "
                                    "independent engine (rows 50+), with variance vs. Base."),
-        ("5. Sensitivity Analysis", "Base scenario, Month 1: contribution per completed "
+        ("2. Executive Dashboard", "One-screen leadership view (16:9, print area A1:N30): six KPI "
+                                "cards, monthly revenue / route operating profit trend, "
+                                "Base / Upside / Downside table and three key decisions. All "
+                                "values link to Financial Model and Scenario Comparison; "
+                                "reconciliation checks sit below the print area."),
+        ("6. Sensitivity Analysis", "Base scenario, Month 1: contribution per completed "
                                     "flight across average fare (columns) x load factor (rows), "
                                     "shaded loss / breakeven / profitable. Flight-level vs. "
                                     "route-level breakeven load factor, three business insights "
                                     "and its own validation checks."),
-        ("Planned: Executive Dashboard", "Not yet built. KPI tiles and charts should reference "
-                                         "out_* names and the Scenario Comparison summary "
-                                         "(rows 6-40) rather than raw cell addresses."),
+
     ])
     block("Colour Legend", [
         ("Blue text, yellow fill", "Editable input (hypothetical, illustrative)."),
@@ -1349,6 +1701,9 @@ def build_readme(wb, A, R):
         ("Green text", "Link pulled from another tab."),
         ("Navy / light-blue bands", "Headers and section titles."),
         ("PASS / FAIL", "Integrity check results (green / red) at the bottom of Financial Model."),
+        ("Executive Dashboard", "Uses presentation colours (navy values) for leadership "
+                                "screenshots; every value is still a formula link to Financial "
+                                "Model or Scenario Comparison."),
     ])
     block("How To Use", [
         ("Step 1", "On Assumptions, choose the active scenario in C5 (Base, Upside, Downside)."),
@@ -1410,7 +1765,11 @@ def build(out_path):
     fm, R, row, last_col = build_financial_model(wb, A)
     _, S, E = build_scenarios(wb, A)
     _, X = build_sensitivity(wb, A, E)
-    master_row, n_checks = build_checks(wb, fm, R, row, last_col, A, S, X)
+    dash, D = build_dashboard(wb, A, R, S)
+    master_row, n_checks = build_checks(wb, fm, R, row, last_col, A, S, X, D)
+    dash[D["footer"]] = (f'="Sources: Financial Model and Scenario Comparison tabs (formula-linked)'
+                         f'   |   Model integrity: "&{FM}!$C${R["master"]}&"   |   Illustrative '
+                         f'prototype - not a Joby Aviation forecast"')
     build_readme(wb, A, R)
 
     # Model status on the Assumptions tab
@@ -1445,7 +1804,10 @@ def build(out_path):
         ws.page_setup.fitToWidth = 1
         ws.page_setup.fitToHeight = 0
         ws.sheet_properties.pageSetUpPr.fitToPage = True
-        ws.sheet_properties.tabColor = NAVY if ws.title != "Read Me" else MID_BLUE
+        ws.sheet_properties.tabColor = MID_BLUE if ws.title in ("Read Me", "Executive Dashboard") else NAVY
+
+    db = wb["Executive Dashboard"]
+    db.page_setup.fitToHeight = 1  # dashboard prints on a single landscape page
 
     wb.calculation.fullCalcOnLoad = True
     wb.calculation.calcMode = "auto"

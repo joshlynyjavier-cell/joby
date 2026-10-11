@@ -9,7 +9,7 @@ For each test case, `audit_model.py` copies the workbook, changes the inputs, re
 copy in LibreOffice and then:
 1. Recomputes every monthly and annual line in Python from the raw inputs. It compares the
    results cell by cell with the Financial Model, the Scenario Comparison engine (all three
-   cases) and the Scenario Comparison summary table (936 cells per case, plus 193 Sensitivity Analysis cells since that tab was added).
+   cases) and the Scenario Comparison summary table (936 cells per case, plus 193 Sensitivity Analysis cells and 36 Executive Dashboard cells since those tabs were added).
 2. Checks these identities on the workbook's own values, every month:
    revenue = passengers × fare;
    passengers = completed flights × seats per flight × load factor;
@@ -29,23 +29,25 @@ copy in LibreOffice and then:
 | 2 | When demand growth pushed the load factor past 100%, the model capped it silently. The "monthly load factor within 0–100%" check can never fail because of that cap. | Low | Added an information-only count of capped months below the check block. It is highlighted when above zero. |
 
 ## Results after the fix
-| Case | Revenue | Contribution | Route op. profit | Contrib./flight | BE LF flight | BE LF route | Cells compared | Identities | Mismatches | Status | Sensitivity status |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| Base (as delivered) | $4,662,285 | $1,278,266 | $198,266 | $125.14 | 46.0% | 62.2% | 1129 | 413 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) |
-| Upside (selector) | $6,111,313 | $2,918,336 | $1,912,245 | $279.82 | 37.8% | 51.0% | 1129 | 413 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) |
-| Downside (selector) | $3,219,996 | $-282,303 | $-1,515,859 | $-29.17 | 58.6% | 81.4% | 1129 | 413 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) |
-| Zero flights (0 flights/day) | $0 | $0 | $-1,080,000 | n.m. | n.m. | n.m. | 1129 | 388 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (5 pass, 5 n/a) |
-| Zero completion rate | $0 | $0 | $-1,080,000 | n.m. | n.m. | n.m. | 1129 | 388 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (5 pass, 5 n/a) |
-| Completion rate 50% | $2,453,834 | $672,771 | $-407,229 | $125.14 | 46.0% | 76.8% | 1129 | 413 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) |
-| Completion rate 100% | $4,907,669 | $1,345,543 | $265,543 | $125.14 | 46.0% | 61.4% | 1129 | 413 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) |
-| Zero load factor | $0 | $-3,064,320 | $-4,144,320 | $-300.00 | 46.0% | 62.2% | 1129 | 413 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (9 pass, 1 n/a) |
-| Full load factor, no growth | $7,150,080 | $3,595,469 | $2,515,469 | $352.00 | 46.0% | 62.2% | 1129 | 413 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) |
-| Full load factor + demand growth (cap) | $7,150,080 | $3,595,469 | $2,515,469 | $352.00 | 46.0% | 62.2% | 1129 | 413 | 0 | ALL 20 CHECKS PASS; 11 capped month(s) | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) |
-| Higher flight op. cost ($600/flight) | $4,662,285 | $-1,786,054 | $-2,866,054 | $-174.86 | 92.0% | 108.2% | 1129 | 413 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) |
-| Fare below cost per passenger ($10) | $266,416 | $-3,117,603 | $-4,197,603 | $-305.22 | n.m. | n.m. | 1129 | 387 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (4 pass, 6 n/a) |
-| Sensitivity: $5 fare step, LF 50%-85% by 2.5pt | $4,662,285 | $1,278,266 | $198,266 | $125.14 | 46.0% | 62.2% | 1129 | 413 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) |
-| Sensitivity: wider $40 fare step, $0 band | $4,662,285 | $1,278,266 | $198,266 | $125.14 | 46.0% | 62.2% | 1129 | 413 | 0 | ALL 20 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) |
-| Sensitivity: LF axis past 100% (should FAIL) | $4,662,285 | $1,278,266 | $198,266 | $125.14 | 46.0% | 62.2% | 1129 | 413 | 0 | REVIEW: 1 CHECK(S) FAILING | REVIEW: 1 FAILING |
+| Case | Revenue | Contribution | Route op. profit | Contrib./flight | BE LF flight | BE LF route | Cells compared | Identities | Mismatches | Status | Sensitivity status | Dashboard status |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Base (as delivered) | $4,662,285 | $1,278,266 | $198,266 | $125.14 | 46.0% | 62.2% | 1165 | 418 | 0 | ALL 21 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) | ALL 11 DASHBOARD CHECKS PASS |
+| Upside (selector) | $6,111,313 | $2,918,336 | $1,912,245 | $279.82 | 37.8% | 51.0% | 1165 | 418 | 0 | ALL 21 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) | ALL 11 DASHBOARD CHECKS PASS |
+| Downside (selector) | $3,219,996 | $-282,303 | $-1,515,859 | $-29.17 | 58.6% | 81.4% | 1165 | 418 | 0 | ALL 21 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) | ALL 11 DASHBOARD CHECKS PASS |
+| Zero flights (0 flights/day) | $0 | $0 | $-1,080,000 | n.m. | n.m. | n.m. | 1165 | 393 | 0 | ALL 21 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (5 pass, 5 n/a) | ALL 11 DASHBOARD CHECKS PASS |
+| Zero completion rate | $0 | $0 | $-1,080,000 | n.m. | n.m. | n.m. | 1165 | 393 | 0 | ALL 21 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (5 pass, 5 n/a) | ALL 11 DASHBOARD CHECKS PASS |
+| Completion rate 50% | $2,453,834 | $672,771 | $-407,229 | $125.14 | 46.0% | 76.8% | 1165 | 418 | 0 | ALL 21 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) | ALL 11 DASHBOARD CHECKS PASS |
+| Completion rate 100% | $4,907,669 | $1,345,543 | $265,543 | $125.14 | 46.0% | 61.4% | 1165 | 418 | 0 | ALL 21 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) | ALL 11 DASHBOARD CHECKS PASS |
+| Zero load factor | $0 | $-3,064,320 | $-4,144,320 | $-300.00 | 46.0% | 62.2% | 1165 | 418 | 0 | ALL 21 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (9 pass, 1 n/a) | ALL 11 DASHBOARD CHECKS PASS |
+| Full load factor, no growth | $7,150,080 | $3,595,469 | $2,515,469 | $352.00 | 46.0% | 62.2% | 1165 | 418 | 0 | ALL 21 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) | ALL 11 DASHBOARD CHECKS PASS |
+| Full load factor + demand growth (cap) | $7,150,080 | $3,595,469 | $2,515,469 | $352.00 | 46.0% | 62.2% | 1165 | 418 | 0 | ALL 21 CHECKS PASS; 11 capped month(s) | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) | ALL 11 DASHBOARD CHECKS PASS |
+| Higher flight op. cost ($600/flight) | $4,662,285 | $-1,786,054 | $-2,866,054 | $-174.86 | 92.0% | 108.2% | 1165 | 418 | 0 | ALL 21 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) | ALL 11 DASHBOARD CHECKS PASS |
+| Fare below cost per passenger ($10) | $266,416 | $-3,117,603 | $-4,197,603 | $-305.22 | n.m. | n.m. | 1165 | 392 | 0 | ALL 21 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (4 pass, 6 n/a) | ALL 11 DASHBOARD CHECKS PASS |
+| Sensitivity: $5 fare step, LF 50%-85% by 2.5pt | $4,662,285 | $1,278,266 | $198,266 | $125.14 | 46.0% | 62.2% | 1165 | 418 | 0 | ALL 21 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) | ALL 11 DASHBOARD CHECKS PASS |
+| Sensitivity: wider $40 fare step, $0 band | $4,662,285 | $1,278,266 | $198,266 | $125.14 | 46.0% | 62.2% | 1165 | 418 | 0 | ALL 21 CHECKS PASS | ALL SENSITIVITY CHECKS PASS (10 pass, 0 n/a) | ALL 11 DASHBOARD CHECKS PASS |
+| Sensitivity: LF axis past 100% (should FAIL) | $4,662,285 | $1,278,266 | $198,266 | $125.14 | 46.0% | 62.2% | 1165 | 418 | 0 | REVIEW: 1 CHECK(S) FAILING | REVIEW: 1 FAILING | ALL 11 DASHBOARD CHECKS PASS |
+
+Dashboard chart references (read from the chart XML): "Passenger revenue", "Route operating profit / (loss)", 'Financial Model'!$C$29:$N$29, 'Financial Model'!$C$37:$N$37, 'Financial Model'!$C$8:$N$8 - linked to Financial Model revenue, route operating profit and period rows.
 
 The breakeven load factor does not change with load factor (it depends only on fare, unit costs,
 seats and fixed costs), so it is the same in the zero-load-factor and full-load-factor cases. That is expected.
@@ -80,6 +82,31 @@ $ band) and profitable combinations.
   Read Me's workbook map describes the new tab. Financial Model gained one check row, which
   moves the two rows below it down by one. No financial value changed.
 
+## Executive Dashboard tab (added later)
+This is a one-screen view sized for a PowerPoint screenshot (print area A1:N30, one landscape
+page). It has six KPI cards, a monthly revenue and route operating profit chart, a Base /
+Upside / Downside table and three Key Decisions boxes. Every number is a formula link to the
+Financial Model tab (KPI cards, chart, decision evidence) or the Scenario Comparison tab
+(scenario table).
+
+- **Audit coverage.** In every run, each KPI card is compared with the Python result for the
+  scenario shown. All 30 table cells are compared with the Python results for Base, Upside and
+  Downside. The audit also confirms that the three decision texts contain no errors, and that
+  the subtitle names the scenario shown.
+- **The chart.** The audit reads the chart's references from the file's chart XML. They point
+  at the Financial Model's passenger revenue, route operating profit and period rows (C:N).
+- **The tab's own checks.** Nine reconciliation checks sit below the print area: each KPI card
+  vs. the Financial Model, the cards vs. the Scenario Comparison active column, every table
+  cell vs. Scenario Comparison, the chart months vs. the KPI totals, and the decision text has
+  no errors. They feed the Financial Model's overall status as check #21.
+- **Issue found and fixed during this audit.** With zero completed flights, or a fare below the
+  cost per passenger, the Key Decisions evidence boxes collapsed to "n.m.". Each box now
+  explains in plain language why its figures are not meaningful.
+- **Existing tabs preserved.** I compared every cell with the previous version. Scenario
+  Comparison and Sensitivity Analysis are unchanged. The Financial Model gained check #21. The
+  status count went from 20 to 21 on the Assumptions and Read Me tabs. The Read Me workbook map
+  was renumbered for the new tab order, with the dashboard second.
+
 ## Limitations
 - **Excel not tested.** All recalculation was done in LibreOffice. The workbook uses only
   functions that work in both (SUM, IF, INDEX, MATCH, MIN, MAX, SUMPRODUCT, COUNTIF, EDATE,
@@ -101,5 +128,10 @@ $ band) and profitable combinations.
 - **The Base-cell highlight may not show.** The bold box and underline come from conditional
   formatting, which LibreOffice's PDF export did not show. The text callout beside the matrix
   shows the same value either way.
+- **The dashboard was only rendered in LibreOffice.** The layout was checked from a LibreOffice
+  PDF export, for both the Base and Upside scenarios. Excel's fonts, chart rendering and column
+  widths can differ slightly, so check the screenshot in Excel before it goes into a deck.
+- **Decision statements are fixed text.** The bold decision lines in Key Decisions are written
+  judgements. Only the evidence text under them is formula-driven and updates with the inputs.
 - **Scope of the edge cases.** Each was applied to the Base case, or to all cases for the shared
   route inputs. Negative and above-100% inputs are tested separately in `validate_model.py`.

@@ -366,6 +366,67 @@ def audit_sensitivity(au, wb, p):
 
 
 # --------------------------------------------------------------------------
+# Executive Dashboard audit
+# --------------------------------------------------------------------------
+DB_KPIS = {"PASSENGER REVENUE": "revenue", "PASSENGERS FLOWN": "pax",
+           "COMPLETED FLIGHTS": "completed", "LOAD FACTOR": "lf",
+           "CONTRIBUTION / FLIGHT": "contrib_flt", "ROUTE OPERATING PROFIT": "rop"}
+DB_TABLE = {"Passenger revenue": "revenue", "Passengers flown": "pax",
+            "Load factor (weighted)": "lf", "Average fare ($ / passenger)": "fare",
+            "Contribution per flight": "contrib_flt", "Contribution profit": "contrib",
+            "Route operating profit": "rop", "Route operating margin": "rom",
+            "Route breakeven load factor": "be_route", "Profitable months (of 12)": "months_pos"}
+
+
+def audit_dashboard(au, wb, inputs, scenario):
+    ws = wb["Executive Dashboard"]
+    Ya = reference(inputs[scenario])[1]
+    # KPI cards: label in row 5, value directly below
+    found = 0
+    for col in range(2, 14):
+        label = ws.cell(row=5, column=col).value
+        if label in DB_KPIS:
+            found += 1
+            au.cmp(f"DB KPI {label}", ws.cell(row=6, column=col).value, Ya[DB_KPIS[label]])
+    au.ident("DB has 6 KPI cards", found == 6)
+    # Scenario table vs reference for every scenario
+    for r in range(11, 25):
+        label = ws.cell(row=r, column=9).value
+        if label not in DB_TABLE:
+            continue
+        for col, s in zip((11, 12, 13), ("Base", "Upside", "Downside")):
+            M, Y = reference(inputs[s])
+            ref = (sum(v > 0 for v in M["rop"]) if DB_TABLE[label] == "months_pos"
+                   else Y[DB_TABLE[label]])
+            au.cmp(f"DB table {label} {s}", ws.cell(row=r, column=col).value, ref)
+    # Key decisions: three evidence cells, text, no errors
+    for col in (2, 6, 10):
+        t = ws.cell(row=28, column=col).value
+        au.ident(f"DB decision text col{col}", isinstance(t, str) and len(t) > 40
+                 and not any(e in t for e in ("#VALUE", "#DIV", "#NAME", "#REF", "#N/A")))
+    # Subtitle reflects the scenario shown
+    au.ident("DB subtitle names scenario", str(ws["B2"].value).endswith(scenario))
+    status = None
+    for r in range(30, ws.max_row + 1):
+        if ws.cell(row=r, column=2).value == "DASHBOARD STATUS":
+            status = ws.cell(row=r, column=10).value
+    return status
+
+
+def audit_dashboard_chart(path):
+    """Read the chart XML from the delivered file and return its series references."""
+    import zipfile
+    import re
+    with zipfile.ZipFile(path) as z:
+        charts = [n for n in z.namelist() if n.startswith("xl/charts/chart")]
+        import html
+        refs = ([html.unescape(r) for r in re.findall(r"<c:f>([^<]+)</c:f>",
+                                                      z.read(charts[0]).decode())]
+                if charts else [])
+    return charts, refs
+
+
+# --------------------------------------------------------------------------
 # Test cases: (name, active scenario, {input key: value applied to that scenario})
 # --------------------------------------------------------------------------
 CASES = [
@@ -479,6 +540,9 @@ def run_case(lo, src, work, idx, name, scenario, overrides):
     au.ident("SA LF-axis check agrees with Python",
              (sstat["Load factor axis within 0%-100%"] == "PASS") == sref["lf_axis_ok"])
     info["sensitivity"] = sa_status
+    info["dashboard"] = audit_dashboard(au, wb, inputs, scenario)
+    if not str(info["dashboard"]).startswith("ALL"):
+        au.failures.append(f"dashboard status: {info['dashboard']}")
     master = fm.cell(row=last, column=3).value
     for lbl in ("Months where demand exceeds seat capacity (load factor capped at 100%)",):
         if lbl in frows:
@@ -509,8 +573,8 @@ def main():
     print("Recalculation engine: LibreOffice headless (Microsoft Excel was not used)\n")
     hdr = (f"| Case | Revenue | Contribution | Route op. profit | Contrib./flight | "
            f"BE LF flight | BE LF route | Cells compared | Identities | Mismatches | Status | "
-           f"Sensitivity status |")
-    lines += [hdr, "|" + "---|" * 12]
+           f"Sensitivity status | Dashboard status |")
+    lines += [hdr, "|" + "---|" * 13]
     detail = []
     for i, (name, scen, ov) in enumerate(CASES):
         au, Y, master, notes, info = run_case(lo, src, work, i, name, scen, ov)
@@ -523,7 +587,7 @@ def main():
         lines.append(f"| {name} | {fmt_money(Y['revenue'])} | {fmt_money(Y['contrib'])} | "
                      f"{fmt_money(Y['rop'])} | {cpf} | {fmt_pct(Y['be_flight'])} | "
                      f"{fmt_pct(Y['be_route'])} | {au.comparisons} | {au.identities} | "
-                     f"{len(au.failures)} | {status} | {info.get('sensitivity')} |")
+                     f"{len(au.failures)} | {status} | {info.get('sensitivity')} | {info.get('dashboard')} |")
         print(f"{name:<42} compared={au.comparisons:<5} identities={au.identities:<5} "
               f"mismatches={len(au.failures):<4} {master}  {'; '.join(notes)}")
         for f in au.failures[:12]:
@@ -532,6 +596,23 @@ def main():
         if len(au.failures) > 12:
             print(f"    ... {len(au.failures) - 12} more")
             detail.append(f"- {name}: ... {len(au.failures) - 12} more")
+    charts, refs = audit_dashboard_chart(src)
+    wbf = load_workbook(src)
+    fmr = rows_by_label(wbf["Financial Model"])
+    want = {f"'Financial Model'!$C${fmr['Passenger revenue']}:$N${fmr['Passenger revenue']}",
+            f"'Financial Model'!$C${fmr['Route operating profit / (loss)']}:"
+            f"$N${fmr['Route operating profit / (loss)']}",
+            f"'Financial Model'!$C${fmr['Period']}:$N${fmr['Period']}"}
+    chart_ok = bool(charts) and want <= set(refs)
+    total_id += 1
+    if not chart_ok:
+        total_fail += 1
+        detail.append(f"- Dashboard chart references {refs} do not cover {sorted(want)}")
+    print(f"Dashboard chart: {len(charts)} chart(s); series/category refs {sorted(set(refs))} "
+          f"-> {'linked to Financial Model' if chart_ok else 'NOT LINKED'}")
+    lines.append("")
+    lines.append(f"Dashboard chart references (read from the chart XML): {', '.join(sorted(set(refs)))}"
+                 f" - {'linked to Financial Model revenue, route operating profit and period rows' if chart_ok else 'NOT LINKED'}.")
     print(f"\nTOTAL cells compared: {total_cmp}  identities tested: {total_id}  "
           f"mismatches: {total_fail}")
     if report:
