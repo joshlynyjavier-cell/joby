@@ -25,3 +25,7 @@ python audit_model.py                      # full audit (LibreOffice recalculati
 ```
 
 Requires Python 3 with `openpyxl`, plus LibreOffice (`soffice`) for validation.
+
+The look follows the case-study deck (dark palette, Roboto Condensed). Install
+[Roboto Condensed](https://fonts.google.com/specimen/Roboto+Condensed) before opening the
+workbook, otherwise Excel will substitute another font.

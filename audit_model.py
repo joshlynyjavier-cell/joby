@@ -381,13 +381,15 @@ DB_TABLE = {"Passenger revenue": "revenue", "Passengers flown": "pax",
 def audit_dashboard(au, wb, inputs, scenario):
     ws = wb["Executive Dashboard"]
     Ya = reference(inputs[scenario])[1]
-    # KPI cards: label in row 5, value directly below
+    # KPI cards: label row sits directly below the value row (deck-style cards)
     found = 0
-    for col in range(2, 14):
-        label = ws.cell(row=5, column=col).value
-        if label in DB_KPIS:
-            found += 1
-            au.cmp(f"DB KPI {label}", ws.cell(row=6, column=col).value, Ya[DB_KPIS[label]])
+    for r in range(1, 11):  # KPI card rows only (the scenario table reuses some labels)
+        for col in range(2, 14):
+            label = ws.cell(row=r, column=col).value
+            if isinstance(label, str) and label.upper() in DB_KPIS:
+                found += 1
+                au.cmp(f"DB KPI {label}", ws.cell(row=r - 1, column=col).value,
+                       Ya[DB_KPIS[label.upper()]])
     au.ident("DB has 6 KPI cards", found == 6)
     # Scenario table vs reference for every scenario
     for r in range(11, 25):
@@ -400,12 +402,13 @@ def audit_dashboard(au, wb, inputs, scenario):
                    else Y[DB_TABLE[label]])
             au.cmp(f"DB table {label} {s}", ws.cell(row=r, column=col).value, ref)
     # Key decisions: three evidence cells, text, no errors
+    kd = next(r for r in range(1, 40) if ws.cell(row=r, column=2).value == "Key Decisions")
     for col in (2, 6, 10):
-        t = ws.cell(row=28, column=col).value
+        t = ws.cell(row=kd + 4, column=col).value
         au.ident(f"DB decision text col{col}", isinstance(t, str) and len(t) > 40
                  and not any(e in t for e in ("#VALUE", "#DIV", "#NAME", "#REF", "#N/A")))
     # Subtitle reflects the scenario shown
-    au.ident("DB subtitle names scenario", str(ws["B2"].value).endswith(scenario))
+    au.ident("DB subtitle names scenario", str(ws["B3"].value).endswith(scenario))
     status = None
     for r in range(30, ws.max_row + 1):
         if ws.cell(row=r, column=2).value == "DASHBOARD STATUS":

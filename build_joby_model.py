@@ -38,15 +38,23 @@ from openpyxl.worksheet.datavalidation import DataValidation
 # --------------------------------------------------------------------------
 # Style palette: navy / white / light blue
 # --------------------------------------------------------------------------
-NAVY = "1F3864"
-MID_BLUE = "2F5597"
-LIGHT_BLUE = "DDEBF7"
-PALE_BLUE = "F2F7FC"
-INPUT_FILL_HEX = "FFF2CC"  # pale yellow: marks cells the user may edit
-WHITE = "FFFFFF"
-GREY = "7F7F7F"
+# Palette and typeface sampled from the case-study presentation (Joby_Case_Study.pdf)
+DECK_BG = "0D131B"        # slide background (near-black navy)
+DECK_SLATE = "2D363F"     # dark cards
+DECK_OFFWHITE = "F9F9F7"  # light cards
+DECK_RULE = "5B6770"      # thin rules
+DECK_MUTED = "ADB7BE"     # secondary text on dark
+DECK_INK = "1B2128"       # text on light cards
 
-FONT_NAME = "Arial"
+NAVY = DECK_BG            # title banners
+MID_BLUE = DECK_SLATE     # table header rows
+LIGHT_BLUE = "E3E7EB"     # section bands
+PALE_BLUE = DECK_OFFWHITE  # totals / active-case cells
+INPUT_FILL_HEX = "E6EEF8"  # pale blue: marks cells the user may edit
+WHITE = "FFFFFF"
+GREY = DECK_RULE
+
+FONT_NAME = "Roboto Condensed"
 F_INPUT = Font(name=FONT_NAME, size=10, color="0000FF")  # editable input
 F_CALC = Font(name=FONT_NAME, size=10, color="000000")  # formula
 F_LINK = Font(name=FONT_NAME, size=10, color="008000")  # link to another tab
@@ -54,11 +62,11 @@ F_BODY = Font(name=FONT_NAME, size=10, color="000000")
 F_BOLD = Font(name=FONT_NAME, size=10, bold=True, color="000000")
 F_BOLD_CALC = Font(name=FONT_NAME, size=10, bold=True, color="000000")
 F_NOTE = Font(name=FONT_NAME, size=9, italic=True, color=GREY)
-F_TITLE = Font(name=FONT_NAME, size=16, bold=True, color=WHITE)
-F_SUBTITLE = Font(name=FONT_NAME, size=10, italic=True, color=WHITE)
+F_TITLE = Font(name=FONT_NAME, size=20, color=WHITE)
+F_SUBTITLE = Font(name=FONT_NAME, size=10, color=DECK_MUTED)
 F_HEADER = Font(name=FONT_NAME, size=10, bold=True, color=WHITE)
 F_SECTION = Font(name=FONT_NAME, size=10, bold=True, color=NAVY)
-F_WARN = Font(name=FONT_NAME, size=10, bold=True, color="C00000")
+F_WARN = Font(name=FONT_NAME, size=10, bold=True, color="B3261E")
 
 FILL_NAVY = PatternFill("solid", fgColor=NAVY)
 FILL_MID = PatternFill("solid", fgColor=MID_BLUE)
@@ -68,7 +76,7 @@ FILL_INPUT = PatternFill("solid", fgColor=INPUT_FILL_HEX)
 FILL_PASS = PatternFill("solid", fgColor="C6EFCE")
 FILL_FAIL = PatternFill("solid", fgColor="FFC7CE")
 
-THIN = Side(style="thin", color="BFBFBF")
+THIN = Side(style="thin", color="C9CED3")
 B_INPUT = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 B_TOP = Border(top=Side(style="thin", color=NAVY))
 B_TOTAL = Border(top=Side(style="thin", color=NAVY), bottom=Side(style="double", color=NAVY))
@@ -131,8 +139,12 @@ def title_block(ws, title, subtitle, last_col):
         for c in range(1, last_col + 1):
             ws.cell(row=row, column=c).fill = FILL_NAVY
     style(ws.cell(row=1, column=1, value=title), font=F_TITLE, align=A_LEFT)
+    style(ws.cell(row=1, column=last_col, value="Finance Case Study  |  2026"),
+          font=Font(name=FONT_NAME, size=8, color=WHITE), align=A_RIGHT)
     style(ws.cell(row=2, column=1, value=subtitle), font=F_SUBTITLE, align=A_LEFT)
-    ws.row_dimensions[1].height = 26
+    for c in range(1, last_col + 1):  # deck-style thin grey rule under the banner
+        ws.cell(row=2, column=c).border = Border(bottom=Side(style="thin", color=GREY))
+    ws.row_dimensions[1].height = 30
     ws.row_dimensions[2].height = 18
     style(ws.cell(row=3, column=1, value=DISCLAIMER), font=F_WARN, align=A_LEFT)
 
@@ -251,7 +263,7 @@ def build_assumptions(wb):
     ws["G4"] = "Legend"
     ws["G4"].font = F_BOLD
     style(ws["G5"], font=F_INPUT, fill=FILL_INPUT, border=B_INPUT)
-    ws["G5"] = "Blue text / yellow fill = editable input (hypothetical, illustrative)"
+    ws["G5"] = "Blue text / pale-blue fill = editable input (hypothetical, illustrative)"
     ws["G6"] = "Black text = formula (do not overwrite)"
     ws["G6"].font = F_CALC
     ws["G7"] = "Green text = link pulled from another tab"
@@ -1145,21 +1157,31 @@ def build_sensitivity(wb, A, E):
 
 
 # --------------------------------------------------------------------------
-# Executive Dashboard tab (one 16:9 screen; every value links to FM / SC)
+# Executive Dashboard tab (one 16:9 dark "slide"; every value links to FM / SC)
+# Styled after the case-study deck: near-black background, slate and off-white
+# cards, thin grey rules, Roboto Condensed, white headings and grey body text.
 # --------------------------------------------------------------------------
 DB = "'Executive Dashboard'"
 DB_COLS = [get_column_letter(c) for c in range(2, 14)]  # B..M (12 columns)
-F_KPI_LABEL = Font(name=FONT_NAME, size=8, bold=True, color=MID_BLUE)
-F_KPI_VALUE = Font(name=FONT_NAME, size=20, bold=True, color=NAVY)
-F_KPI_SUB = Font(name=FONT_NAME, size=8, color=GREY)
-F_KPI_DELTA = Font(name=FONT_NAME, size=8, bold=True, color=NAVY)
 FMT_MUSD = '$#,##0.00,,"M";($#,##0.00,,"M");"-"'
+DK_BG, DK_CARD, DK_LIGHT, DK_RULE, DK_MUTED, DK_INK = (DECK_BG, DECK_SLATE, DECK_OFFWHITE,
+                                                       DECK_RULE, DECK_MUTED, DECK_INK)
+DK_NEG = "F28B82"  # soft red for losses on the dark background
+
+
+def dfont(size, color=WHITE, bold=False, italic=False, underline=None):
+    return Font(name=FONT_NAME, size=size, color=color, bold=bold, italic=italic,
+                underline=underline)
 
 
 def build_dashboard(wb, A, R, S):
     from openpyxl.chart import BarChart, LineChart, Reference
+    from openpyxl.chart.series import SeriesLabel
     from openpyxl.chart.shapes import GraphicalProperties
+    from openpyxl.chart.text import RichText
     from openpyxl.drawing.line import LineProperties
+    from openpyxl.drawing.text import CharacterProperties, Font as DFont, Paragraph
+    from openpyxl.drawing.text import ParagraphProperties
 
     ws = wb.create_sheet("Executive Dashboard", 1)
     D = {}
@@ -1167,52 +1189,71 @@ def build_dashboard(wb, A, R, S):
     scr = lambda k, col: f"{SC}!${col}${S[k]}"  # noqa: E731  Scenario Comparison summary
     scenario = f"{AS}!$C${A['scenario']}"
     sc_active = lambda k: f"INDEX({SC}!$C${S[k]}:$E${S[k]},{AS}!$C${A['scenario_idx']})"  # noqa
+    first, last = DB_COLS[0], DB_COLS[-1]
+    FILL_BG = PatternFill("solid", fgColor=DK_BG)
+    FILL_CARD = PatternFill("solid", fgColor=DK_CARD)
+    FILL_LCARD = PatternFill("solid", fgColor=DK_LIGHT)
+    rule = Side(style="thin", color=DK_RULE)
+    gap = Side(style="thick", color=DK_BG)  # thick background-coloured edge = gap between cards
 
     ws.column_dimensions["A"].width = 2
     for c in DB_COLS:
         ws.column_dimensions[c].width = 11.5
     ws.column_dimensions["N"].width = 2
-    first, last = DB_COLS[0], DB_COLS[-1]
+    # Paint the whole slide (and a margin around it) in the deck background colour
+    for r in range(1, 33):
+        for c in range(1, 17):
+            ws.cell(row=r, column=c).fill = FILL_BG
 
-    def band(row, fill, height=None):
-        for c in ["A"] + DB_COLS + ["N"]:
-            ws[f"{c}{row}"].fill = fill
-        if height:
-            ws.row_dimensions[row].height = height
-
-    def merged(rng, value, font, fill=None, align=A_LEFT, fmt=None, border=None):
+    def merged(rng, value, font, fill=None, align=A_LEFT, fmt=None):
         ws.merge_cells(rng)
-        tl = rng.split(":")[0]
-        c = ws[tl]
+        c = ws[rng.split(":")[0]]
         c.value = value
-        style(c, font=font, fill=fill, align=align, fmt=fmt)
-        if fill or border:
+        style(c, font=font, align=align, fmt=fmt)
+        if fill:
             for row in ws[rng]:
                 for cell in row:
-                    if fill:
-                        cell.fill = fill
-                    if border:
-                        cell.border = border
+                    cell.fill = fill
         return c
 
-    # ---- Banner -----------------------------------------------------------
-    band(1, FILL_NAVY, 30)
-    band(2, FILL_NAVY, 18)
-    merged(f"B1:{last}1", "Air Taxi Route Economics  |  Executive Dashboard",
-           Font(name=FONT_NAME, size=18, bold=True, color=WHITE), align=A_LEFT)
-    merged(f"B2:{last}2",
-           (f'="Joby Aviation case study   |   "&{act(A, "route_name")}&"   |   "&'
-            f'{act(A, "service_type")}&"   |   12 months "&TEXT({FM}!$C${R["period"]},"mmm yyyy")'
-            f'&" - "&TEXT({FM}!${LAST_M}${R["period"]},"mmm yyyy")&"   |   Scenario shown: "'
-            f'&{scenario}'),
-           Font(name=FONT_NAME, size=10, color="D9E2F3"), align=A_LEFT)
-    ws.row_dimensions[3].height = 16
-    merged(f"B3:{last}3", "ILLUSTRATIVE DATA ONLY - hypothetical case-study assumptions; not a "
-                          "Joby Aviation forecast, guidance or company-reported figure.",
-           Font(name=FONT_NAME, size=8, bold=True, italic=True, color="C00000"), align=A_LEFT)
-    ws.row_dimensions[4].height = 6
+    def box(c1, c2, r1, r2, top=None):
+        """Card edges: background-coloured gaps left/right, optional top rule."""
+        for r in range(r1, r2 + 1):
+            for c in (c1, c2):
+                cell = ws[f"{c}{r}"]
+                b = cell.border
+                cell.border = Border(left=gap if c == c1 else b.left,
+                                     right=gap if c == c2 else b.right,
+                                     top=(top if (top and r == r1) else b.top), bottom=b.bottom)
 
-    # ---- KPI cards (rows 5-8) ----------------------------------------------
+    def underline_row(r, c1, c2, side=rule):
+        for col in range(ws[f"{c1}1"].column, ws[f"{c2}1"].column + 1):
+            cell = ws.cell(row=r, column=col)
+            b = cell.border
+            cell.border = Border(left=b.left, right=b.right, top=b.top, bottom=side)
+
+    # ---- Deck header strip, title, subtitle, disclaimer (rows 1-4) ---------
+    heights = {1: 16, 2: 34, 3: 16, 4: 15, 5: 6}
+    for r, h in heights.items():
+        ws.row_dimensions[r].height = h
+    merged("B1:E1", "Joby Aviation", dfont(8))
+    merged("F1:I1", "Executive Dashboard", dfont(8), align=A_CENTER)
+    merged(f"J1:{last}1", "Finance Case Study  |  2026", dfont(8), align=A_RIGHT)
+    underline_row(1, first, last)
+    merged(f"B2:{last}2", "Air Taxi Route Economics", dfont(24),
+           align=Alignment(horizontal="left", vertical="bottom"))
+    merged(f"B3:{last}3",
+           (f'={act(A, "route_name")}&"   |   "&{act(A, "service_type")}&"   |   12 months "&'
+            f'TEXT({FM}!$C${R["period"]},"mmm yyyy")&" - "&TEXT({FM}!${LAST_M}${R["period"]},'
+            f'"mmm yyyy")&"   |   Scenario shown: "&{scenario}'), dfont(10, DK_MUTED))
+    merged(f"B4:{last}4", "ILLUSTRATIVE DATA ONLY  -  hypothetical case-study assumptions; not a "
+                          "Joby Aviation forecast, guidance or company-reported figure.",
+           dfont(8, DK_MUTED, bold=True, italic=True))
+
+    # ---- KPI cards: off-white, value / rule / label (deck "Sensitivity Model" cards) --
+    KV, KL, KS, KD = 6, 7, 8, 9
+    for r, h in ((KV, 34), (KL, 15), (KS, 13), (KD, 15)):
+        ws.row_dimensions[r].height = h
     is_base = f'{scenario}="Base"'
 
     def pct_delta(k):
@@ -1220,120 +1261,117 @@ def build_dashboard(wb, A, R, S):
                 f'{scr(k, "C")}-1,"+0.0%;-0.0%;0.0%"),"vs Base: n.m."))')
 
     cards = [
-        ("PASSENGER REVENUE", f"={fmr('revenue')}", FMT_MUSD,
-         '="USD, 12-month total"', pct_delta("revenue"), "revenue"),
-        ("PASSENGERS FLOWN", f"={fmr('pax')}", FMT_NUM,
-         '="passengers, 12-month total"', pct_delta("pax"), "pax"),
-        ("COMPLETED FLIGHTS", f"={fmr('completed')}", FMT_NUM,
-         f'="flights  |  "&TEXT({fmr("comp")},"0.0%")&" completion"',
-         pct_delta("completed"), "completed"),
-        ("LOAD FACTOR", f"={fmr('lf')}", FMT_PCT,
-         '="weighted: passengers / seats"',
+        ("Passenger revenue", f"={fmr('revenue')}", FMT_MUSD, '="USD, 12-month total"',
+         pct_delta("revenue"), "revenue"),
+        ("Passengers flown", f"={fmr('pax')}", FMT_NUM, '="passengers, 12-month total"',
+         pct_delta("pax"), "pax"),
+        ("Completed flights", f"={fmr('completed')}", FMT_NUM,
+         f'="flights  |  "&TEXT({fmr("comp")},"0.0%")&" completion"', pct_delta("completed"),
+         "completed"),
+        ("Load factor", f"={fmr('lf')}", FMT_PCT, '="weighted: passengers / seats"',
          (f'=IF({is_base},"Base case shown",IFERROR("vs Base: "&TEXT(({fmr("lf")}-'
           f'{scr("lf", "C")})*100,"+0.0;-0.0;0.0")&" pts","vs Base: n.m."))'), "lf"),
-        ("CONTRIBUTION / FLIGHT", f"={fmr('contrib_flt')}", FMT_USD2,
+        ("Contribution / flight", f"={fmr('contrib_flt')}", FMT_USD2,
          '="USD / completed flight, pre-fixed costs"',
          (f'=IF({is_base},"Base case shown",IFERROR("vs Base: "&TEXT({fmr("contrib_flt")}-'
           f'{scr("contrib_flt", "C")},"+$#,##0.00;-$#,##0.00;$0.00"),"vs Base: n.m."))'),
          "contrib_flt"),
-        ("ROUTE OPERATING PROFIT", f"={fmr('rop')}", FMT_MUSD,
-         f'="after fixed costs  |  "&IFERROR(TEXT({fmr("rom")},"0.0%"),"n.m.")'
-         f'&" margin"',
+        ("Route operating profit", f"={fmr('rop')}", FMT_MUSD,
+         f'="after fixed costs  |  "&IFERROR(TEXT({fmr("rom")},"0.0%"),"n.m.")&" margin"',
          (f'=IF({is_base},"Base case shown","vs Base: "&TEXT(({fmr("rop")}-{scr("rop", "C")})'
           f'/1000000,"+$0.00;-$0.00;$0.00")&"M")'), "rop"),
     ]
-    card_border = Border(left=Side(style="thin", color="BDD7EE"),
-                         right=Side(style="thin", color="BDD7EE"),
-                         top=Side(style="medium", color=MID_BLUE),
-                         bottom=Side(style="thin", color="BDD7EE"))
-    for r, h in ((5, 16), (6, 30), (7, 13), (8, 14)):
-        ws.row_dimensions[r].height = h
-    D["kpi"] = {}
+    D["kpi"], D["kpi_rows"] = {}, (KV, KL)
+    ind = dict(indent=1)
     for i, (label, value, fmt, sub, delta, key) in enumerate(cards):
         c1, c2 = DB_COLS[2 * i], DB_COLS[2 * i + 1]
-        for r in range(5, 9):
-            for c in (c1, c2):
-                ws[f"{c}{r}"].fill = FILL_PALE
-        merged(f"{c1}5:{c2}5", label, F_KPI_LABEL, align=Alignment(horizontal="left",
-                                                                    vertical="bottom", indent=1))
-        merged(f"{c1}6:{c2}6", value, F_KPI_VALUE, fmt=fmt,
-               align=Alignment(horizontal="left", vertical="center", indent=1))
-        merged(f"{c1}7:{c2}7", sub, F_KPI_SUB, align=Alignment(horizontal="left",
-                                                               vertical="center", indent=1))
-        merged(f"{c1}8:{c2}8", delta, F_KPI_DELTA, align=Alignment(horizontal="left",
-                                                                   vertical="top", indent=1))
-        for r in range(5, 9):
-            for c in (c1, c2):
-                b = ws[f"{c}{r}"].border
-                ws[f"{c}{r}"].border = Border(
-                    left=card_border.left if c == c1 else b.left,
-                    right=card_border.right if c == c2 else b.right,
-                    top=card_border.top if r == 5 else b.top,
-                    bottom=card_border.bottom if r == 8 else b.bottom)
-        D["kpi"][key] = f"{c1}6"
-        ws.conditional_formatting.add(f"{c1}6", CellIsRule(operator="lessThan", formula=["0"],
-                                                           font=Font(color="C00000")))
-    ws.row_dimensions[9].height = 8
+        merged(f"{c1}{KV}:{c2}{KV}", value, dfont(22, DK_INK), fill=FILL_LCARD, fmt=fmt,
+               align=Alignment(horizontal="left", vertical="bottom", **ind))
+        merged(f"{c1}{KL}:{c2}{KL}", label, dfont(9, DK_INK), fill=FILL_LCARD,
+               align=Alignment(horizontal="left", vertical="center", **ind))
+        merged(f"{c1}{KS}:{c2}{KS}", sub, dfont(7.5, DK_RULE), fill=FILL_LCARD,
+               align=Alignment(horizontal="left", vertical="center", **ind))
+        merged(f"{c1}{KD}:{c2}{KD}", delta, dfont(7.5, DK_INK, bold=True), fill=FILL_LCARD,
+               align=Alignment(horizontal="left", vertical="top", **ind))
+        box(c1, c2, KV, KD)
+        for c in (c1, c2):  # the deck's grey rule between value and label
+            b = ws[f"{c}{KL}"].border
+            ws[f"{c}{KL}"].border = Border(left=b.left, right=b.right,
+                                           top=Side(style="medium", color=DK_RULE))
+        D["kpi"][key] = f"{c1}{KV}"
+        ws.conditional_formatting.add(f"{c1}{KV}", CellIsRule(
+            operator="lessThan", formula=["0"], font=Font(color="B3261E")))
+    ws.row_dimensions[10].height = 10
 
-    # ---- Section headers (row 10) -----------------------------------------------
-    sec_font = Font(name=FONT_NAME, size=10, bold=True, color=NAVY)
-    sec_border = Border(bottom=Side(style="medium", color=NAVY))
-    ws.row_dimensions[10].height = 18
-    merged("B10:H10", "Monthly Passenger Revenue and Route Operating Profit (USD)", sec_font,
-           border=sec_border)
-    merged(f"I10:{last}10", "Scenario Comparison - 12-Month Totals", sec_font, border=sec_border)
+    # ---- Section headings (deck style: white, regular, thin grey rule) --------------
+    SEC = 11
+    ws.row_dimensions[SEC].height = 22
+    merged(f"B{SEC}:H{SEC}", "Monthly Revenue and Route Operating Profit", dfont(13))
+    merged(f"I{SEC}:{last}{SEC}", "Scenario Comparison", dfont(13))
+    underline_row(SEC, "B", "H")
+    underline_row(SEC, "I", last)
 
-    # ---- Trend chart (links directly to Financial Model rows) --------------------
+    # ---- Trend chart (links directly to Financial Model rows) -----------------------
     fm_ws = wb["Financial Model"]
     cats = Reference(fm_ws, min_col=FIRST_MONTH_COL, max_col=FIRST_MONTH_COL + MONTHS - 1,
                      min_row=R["period"])
+
+    def txt(size=800, color=DK_MUTED):
+        cp = CharacterProperties(sz=size, solidFill=color, latin=DFont(typeface=FONT_NAME))
+        return RichText(p=[Paragraph(pPr=ParagraphProperties(defRPr=cp), endParaRPr=cp)])
+
     bar = BarChart()
     bar.type = "col"
-    bar.add_data(Reference(fm_ws, min_col=2, max_col=FIRST_MONTH_COL + MONTHS - 1,
-                           min_row=R["revenue"]), from_rows=True, titles_from_data=False)
-    bar.series[0].tx = None
-    from openpyxl.chart.series import SeriesLabel
+    bar.add_data(Reference(fm_ws, min_col=FIRST_MONTH_COL,
+                           max_col=FIRST_MONTH_COL + MONTHS - 1, min_row=R["revenue"]),
+                 from_rows=True, titles_from_data=False)
     bar.series[0].tx = SeriesLabel(v="Passenger revenue")
-    bar.series[0].graphicalProperties = GraphicalProperties(solidFill="9DC3E6")
+    bar.series[0].graphicalProperties = GraphicalProperties(solidFill="7D8A95")
     bar.series[0].graphicalProperties.line.noFill = True
-    bar.gapWidth = 60
+    bar.gapWidth = 70
     line = LineChart()
     line.add_data(Reference(fm_ws, min_col=FIRST_MONTH_COL, max_col=FIRST_MONTH_COL + MONTHS - 1,
                             min_row=R["rop"]), from_rows=True, titles_from_data=False)
     line.series[0].tx = SeriesLabel(v="Route operating profit / (loss)")
     line.series[0].graphicalProperties = GraphicalProperties(
-        ln=LineProperties(solidFill=NAVY, w=28575))
+        ln=LineProperties(solidFill=WHITE, w=25400))
     line.series[0].marker.symbol = "circle"
     line.series[0].marker.size = 5
-    line.series[0].marker.graphicalProperties = GraphicalProperties(solidFill=NAVY)
+    line.series[0].marker.graphicalProperties = GraphicalProperties(solidFill=WHITE)
+    line.series[0].marker.graphicalProperties.line.solidFill = WHITE
     line.series[0].smooth = False
-    # bar's first data point is column B (unit) - restrict to C..N instead
-    bar.series[0].val.numRef.f = (f"{FM}!${FIRST_M}${R['revenue']}:${LAST_M}${R['revenue']}")
     bar.set_categories(cats)
     line.set_categories(cats)
     bar.y_axis.numFmt = '$#,##0,"K"'
-    bar.y_axis.majorGridlines.spPr = GraphicalProperties(ln=LineProperties(solidFill="E7EEF7"))
+    bar.y_axis.majorGridlines.spPr = GraphicalProperties(ln=LineProperties(solidFill=DK_CARD))
     bar.x_axis.number_format = "mmm-yy"
-    bar.x_axis.delete = False
     bar.x_axis.tickLblPos = "low"  # keep month labels below negative bars/points
-    bar.y_axis.delete = False
+    for ax in (bar.x_axis, bar.y_axis):
+        ax.delete = False
+        ax.txPr = txt()
+        ax.spPr = GraphicalProperties(ln=LineProperties(solidFill=DK_RULE))
     bar.y_axis.title = None
     bar.legend.position = "b"
-    bar.height = 6.3
+    bar.legend.txPr = txt(800, WHITE)
+    bar.graphical_properties = GraphicalProperties(solidFill=DK_BG)
+    bar.graphical_properties.line.noFill = True
+    bar.plot_area.graphicalProperties = GraphicalProperties(solidFill=DK_BG)
+    bar.plot_area.graphicalProperties.line.noFill = True
+    bar.height = 6.4
     bar.width = 14.6
     bar += line
-    ws.add_chart(bar, "B11")
+    ws.add_chart(bar, f"B{SEC + 1}")
     D["chart_rows"] = (R["revenue"], R["rop"], R["period"])
 
-    # ---- Scenario table (links to Scenario Comparison summary) ------------------
-    hdr = 11
-    ws.row_dimensions[hdr].height = 16
-    merged(f"I{hdr}:J{hdr}", "USD unless noted", Font(name=FONT_NAME, size=8, italic=True,
-                                                       color=WHITE), fill=FILL_MID)
-    for col, name in zip("KLM", ("Base", "Upside", "Downside")):
-        style(ws[f"{col}{hdr}"], font=Font(name=FONT_NAME, size=9, bold=True, color=WHITE),
-              fill=FILL_MID, align=A_CENTER)
-        ws[f"{col}{hdr}"] = name
+    # ---- Scenario table (deck table: dark, white text, thin grey rules) -------------
+    hdr = SEC + 1
+    ws.row_dimensions[hdr].height = 18
+    merged(f"I{hdr}:J{hdr}", "USD UNLESS NOTED", dfont(8, DK_MUTED), fill=FILL_CARD,
+           align=Alignment(horizontal="left", vertical="center", indent=1))
+    for col, name in zip("KLM", ("BASE", "UPSIDE", "DOWNSIDE")):
+        style(ws[f"{col}{hdr}"], font=dfont(9, DK_MUTED, bold=True), fill=FILL_CARD,
+              align=A_CENTER)
+        ws[f"{col}{hdr}"] = name.title()
     table = [
         ("Passenger revenue", "revenue", FMT_MUSD),
         ("Passengers flown", "pax", FMT_NUM),
@@ -1347,42 +1385,39 @@ def build_dashboard(wb, A, R, S):
         ("Profitable months (of 12)", "profit_months", FMT_INT),
     ]
     D["table"] = {}
-    t_font = Font(name=FONT_NAME, size=9, color="000000")
     for i, (label, key, fmt) in enumerate(table):
         r = hdr + 1 + i
         ws.row_dimensions[r].height = 16
-        fill = FILL_PALE if i % 2 == 0 else PatternFill("solid", fgColor=WHITE)
         bold = key in ("rop", "contrib_flt")
-        merged(f"I{r}:J{r}", label, Font(name=FONT_NAME, size=9, bold=bold, color=NAVY), fill=fill)
+        merged(f"I{r}:J{r}", label, dfont(9, WHITE, bold=bold),
+               align=Alignment(horizontal="left", vertical="center", indent=1))
         for col, sc in zip("KLM", "CDE"):
-            style(ws[f"{col}{r}"], font=Font(name=FONT_NAME, size=9, bold=bold, color=NAVY),
-                  fmt=fmt, align=A_RIGHT, fill=fill)
+            style(ws[f"{col}{r}"], font=dfont(9, WHITE, bold=bold), fmt=fmt, align=A_RIGHT)
             ws[f"{col}{r}"] = f"={scr(key, sc)}"
+        underline_row(r, "I", last)
         D["table"][key] = r
     t_last = hdr + len(table)
-    for r in range(hdr + 1, t_last + 1):
-        ws[f"{last}{r}"].border = Border(right=Side(style="thin", color="BDD7EE"))
     ws.conditional_formatting.add(f"K{hdr + 1}:M{t_last}", CellIsRule(
-        operator="lessThan", formula=["0"], font=Font(color="C00000")))
-    # highlight the scenario currently driving the KPI cards
+        operator="lessThan", formula=["0"], font=Font(color=DK_NEG)))
+    # the scenario driving the KPI cards gets an off-white header (deck "selected" card)
     ws.conditional_formatting.add(f"K{hdr}:M{hdr}", FormulaRule(
-        formula=[f"K${hdr}={scenario}"], fill=PatternFill("solid", fgColor=NAVY),
-        font=Font(color=WHITE, bold=True, underline="single")))
+        formula=[f"K${hdr}={scenario}"], fill=PatternFill("solid", fgColor=DK_LIGHT),
+        font=Font(color=DK_INK, bold=True)))
     r = t_last + 1
     ws.row_dimensions[r].height = 14
     merged(f"I{r}:{last}{r}",
-           f'="Navy header = scenario in KPI cards ("&{scenario}&"). Breakeven LF includes '
-           f'fixed route costs."', Font(name=FONT_NAME, size=7, italic=True,
-                                                     color=GREY))
-    # pad rows so the chart area (rows 11-23) has an even height
-    for rr in range(r + 1, 24):
+           f'="Highlighted column = scenario in KPI cards ("&{scenario}&"). Breakeven LF '
+           f'includes fixed route costs."', dfont(7, DK_MUTED, italic=True))
+    for rr in range(r + 1, 25):
         ws.row_dimensions[rr].height = 16
-    ws.row_dimensions[24].height = 8
+    ws.row_dimensions[25].height = 10
 
-    # ---- Key decisions (rows 25-28) ----------------------------------------------------
-    ws.row_dimensions[25].height = 18
-    merged(f"B25:{last}25", "Key Decisions for Finance & Operations Leadership "
-                            "(scenario shown in KPI cards)", sec_font, border=sec_border)
+    # ---- Key decisions: three slate cards ---------------------------------------------
+    KH = 26
+    ws.row_dimensions[KH].height = 22
+    merged(f"B{KH}:{last}{KH}", "Key Decisions", dfont(13))
+    underline_row(KH, first, last)
+    ws.row_dimensions[KH + 1].height = 6
     fare, lf, be = fmr("fare"), fmr("lf"), fmr("be_route")
     sched, comp, cpf = fmr("sched"), fmr("completed"), fmr("contrib_flt")
     rop_rng = f"{FM}!${FIRST_M}${R['rop']}:${LAST_M}${R['rop']}"
@@ -1413,31 +1448,37 @@ def build_dashboard(wb, A, R, S):
           f'to cover them (route operating profit "&TEXT({fmr("rop")}/1000000,"$0.00;-$0.00")'
           f'&"M).")')),
     ]
-    box_cols = [("B", "E"), ("F", "I"), ("J", last)]
-    for r, h in ((26, 17), (27, 26), (28, 50)):
+    DT, DS, DE = KH + 2, KH + 3, KH + 4
+    for r, h in ((DT, 20), (DS, 26), (DE, 46)):
         ws.row_dimensions[r].height = h
+    box_cols = [("B", "E"), ("F", "I"), ("J", last)]
     D["decisions"] = []
-    box_border_l = Side(style="medium", color=MID_BLUE)
     for (c1, c2), (title, decision, evidence) in zip(box_cols, decisions):
-        merged(f"{c1}26:{c2}26", title, Font(name=FONT_NAME, size=9, bold=True, color=WHITE),
-               fill=FILL_NAVY, align=Alignment(horizontal="left", vertical="center", indent=1))
-        merged(f"{c1}27:{c2}27", decision, Font(name=FONT_NAME, size=9, bold=True, color=NAVY),
-               fill=FILL_LIGHT, align=Alignment(horizontal="left", vertical="center",
-                                                wrap_text=True, indent=1))
-        merged(f"{c1}28:{c2}28", evidence, Font(name=FONT_NAME, size=8, color="000000"),
-               fill=FILL_PALE, align=Alignment(horizontal="left", vertical="top",
-                                               wrap_text=True, indent=1))
-        D["decisions"].append(f"{c1}28")
-    ws.row_dimensions[29].height = 6
+        merged(f"{c1}{DT}:{c2}{DT}", title, dfont(10), fill=FILL_CARD,
+               align=Alignment(horizontal="left", vertical="center", indent=1))
+        merged(f"{c1}{DS}:{c2}{DS}", decision, dfont(9, WHITE, bold=True), fill=FILL_CARD,
+               align=Alignment(horizontal="left", vertical="center", wrap_text=True, indent=1))
+        merged(f"{c1}{DE}:{c2}{DE}", evidence, dfont(8, DK_MUTED), fill=FILL_CARD,
+               align=Alignment(horizontal="left", vertical="top", wrap_text=True, indent=1))
+        box(c1, c2, DT, DE)
+        for c in range(ws[f"{c1}1"].column, ws[f"{c2}1"].column + 1):
+            cell = ws.cell(row=DS, column=c)
+            b = cell.border
+            cell.border = Border(left=b.left, right=b.right, top=rule)
+        D["decisions"].append(f"{c1}{DE}")
 
-    # ---- Footer -----------------------------------------------------------------
-    band(30, FILL_NAVY, 16)
-    D["footer"] = f"B30"
-    merged(f"B30:{last}30", None, Font(name=FONT_NAME, size=8, color="D9E2F3"))
-    D["print_area"] = f"A1:N30"
+    # ---- Footer (deck page footer: small grey text, rule above) -------------------
+    FT = DE + 2
+    ws.row_dimensions[DE + 1].height = 8
+    ws.row_dimensions[FT].height = 16
+    D["footer"] = f"B{FT}"
+    merged(f"B{FT}:{last}{FT}", None, dfont(7.5, DK_MUTED))
+    for col in range(2, 14):
+        ws.cell(row=FT, column=col).border = Border(top=rule)
+    D["print_area"] = f"A1:N{FT}"
 
     # ---- Reconciliation checks (below the screenshot / print area) ---------------
-    r = 33
+    r = FT + 4
     section_row(ws, r, "Dashboard Reconciliation Checks (outside print area)", 13)
     r += 1
     tol = "0.000001"
@@ -1683,7 +1724,7 @@ def build_readme(wb, A, R):
                                "checks. FY totals in column O."),
         ("5. Scenario Comparison", "Base / Upside / Downside computed side by side by an "
                                    "independent engine (rows 50+), with variance vs. Base."),
-        ("2. Executive Dashboard", "One-screen leadership view (16:9, print area A1:N30): six KPI "
+        ("2. Executive Dashboard", "One-screen leadership view (16:9, print area A1:N32): six KPI "
                                 "cards, monthly revenue / route operating profit trend, "
                                 "Base / Upside / Downside table and three key decisions. All "
                                 "values link to Financial Model and Scenario Comparison; "
@@ -1696,12 +1737,13 @@ def build_readme(wb, A, R):
 
     ])
     block("Colour Legend", [
-        ("Blue text, yellow fill", "Editable input (hypothetical, illustrative)."),
+        ("Blue text, pale-blue fill", "Editable input (hypothetical, illustrative)."),
         ("Black text", "Formula - do not overwrite."),
         ("Green text", "Link pulled from another tab."),
-        ("Navy / light-blue bands", "Headers and section titles."),
+        ("Dark / slate / grey bands", "Banners, table headers and section titles. Palette and "
+                                      "Roboto Condensed typeface follow the case-study deck."),
         ("PASS / FAIL", "Integrity check results (green / red) at the bottom of Financial Model."),
-        ("Executive Dashboard", "Uses presentation colours (navy values) for leadership "
+        ("Executive Dashboard", "Dark slide styling matching the case-study deck, for leadership "
                                 "screenshots; every value is still a formula link to Financial "
                                 "Model or Scenario Comparison."),
     ])
@@ -1804,7 +1846,7 @@ def build(out_path):
         ws.page_setup.fitToWidth = 1
         ws.page_setup.fitToHeight = 0
         ws.sheet_properties.pageSetUpPr.fitToPage = True
-        ws.sheet_properties.tabColor = MID_BLUE if ws.title in ("Read Me", "Executive Dashboard") else NAVY
+        ws.sheet_properties.tabColor = DECK_RULE if ws.title in ("Read Me", "Executive Dashboard") else NAVY
 
     db = wb["Executive Dashboard"]
     db.page_setup.fitToHeight = 1  # dashboard prints on a single landscape page

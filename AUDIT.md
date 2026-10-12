@@ -107,6 +107,28 @@ Financial Model tab (KPI cards, chart, decision evidence) or the Scenario Compar
   status count went from 20 to 21 on the Assumptions and Read Me tabs. The Read Me workbook map
   was renumbered for the new tab order, with the dashboard second.
 
+## Visual restyle to match the case-study deck (latest change)
+The look was restyled to match `Joby_Case_Study.pdf`. The palette was sampled from the
+rendered slides:
+
+| Use | Colour |
+|---|---|
+| Background | `#0D131B` |
+| Slate cards | `#2D363F` |
+| Off-white cards | `#F9F9F7` |
+| Rules | `#5B6770` |
+| Muted text | `#ADB7BE` |
+
+The typeface is Roboto Condensed, read from the PDF's embedded fonts.
+
+- **Executive Dashboard:** rebuilt as a dark slide in the deck's layout, with the deck's
+  header strip, off-white KPI cards and slate decision cards.
+- **Other tabs:** a light version of the same palette.
+- **No numbers changed.** Every value outside the dashboard is identical to the previous
+  version. The only formula change is the Financial Model check that points at the
+  dashboard's status cell, which moved when the layout changed. The full audit above was
+  re-run after the restyle.
+
 ## Limitations
 - **Excel not tested.** All recalculation was done in LibreOffice. The workbook uses only
   functions that work in both (SUM, IF, INDEX, MATCH, MIN, MAX, SUMPRODUCT, COUNTIF, EDATE,
@@ -131,6 +153,10 @@ Financial Model tab (KPI cards, chart, decision evidence) or the Scenario Compar
 - **The dashboard was only rendered in LibreOffice.** The layout was checked from a LibreOffice
   PDF export, for both the Base and Upside scenarios. Excel's fonts, chart rendering and column
   widths can differ slightly, so check the screenshot in Excel before it goes into a deck.
+- **Roboto Condensed must be installed.** It is free from Google Fonts. The workbook names
+  the font but does not embed it, so on a machine without it Excel substitutes another font
+  and the dashboard spacing will look different. The previews here were rendered with
+  Roboto Condensed installed.
 - **Decision statements are fixed text.** The bold decision lines in Key Decisions are written
   judgements. Only the evidence text under them is formula-driven and updates with the inputs.
 - **Scope of the edge cases.** Each was applied to the Base case, or to all cases for the shared
